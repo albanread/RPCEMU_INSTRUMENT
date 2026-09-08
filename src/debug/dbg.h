@@ -33,6 +33,37 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ */
+/* CPU run state                                                      */
+/* ------------------------------------------------------------------ */
+
+typedef enum {
+	DBG_RUNNING,
+	DBG_STOPPED,
+	DBG_STEPPING
+} DbgRunState;
+
+typedef enum {
+	DBG_STOP_NONE,
+	DBG_STOP_REQUEST,	/**< Asked to stop */
+	DBG_STOP_STEP,		/**< Step count reached */
+	DBG_STOP_BREAKPOINT
+} DbgStopReason;
+
+/** Raised whenever the CPU must be checked before each instruction. Read
+    directly by arm_exec() so the common case costs one predictable branch. */
+extern int dbg_cpu_gate;
+
+extern void dbg_cpu_init(void);
+extern DbgRunState dbg_cpu_state(void);
+extern int dbg_cpu_running(void);
+extern void dbg_cpu_halt(DbgStopReason reason);
+extern void dbg_cpu_continue(void);
+extern void dbg_cpu_step(uint64_t count);
+extern int dbg_cpu_may_execute(uint32_t pc);
+extern int dbg_cpu_take_stop_event(DbgStopReason *reason, uint32_t *pc);
+extern const char *dbg_stop_reason_name(DbgStopReason reason);
+
+/* ------------------------------------------------------------------ */
 /* VDU stream capture                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -63,8 +94,8 @@ extern void dbg_vdu_close(void);
 /** Stream captured output to a file as it arrives. NULL to stop. */
 extern void dbg_vdu_set_file(FILE *f);
 
-/** Mirror captured output to stdout as it arrives. */
-extern void dbg_vdu_set_echo(int enable);
+/** Mirror captured output to a stream as it arrives. NULL to stop. */
+extern void dbg_vdu_set_echo(FILE *f);
 
 /** Total bytes ever captured, which only increases. */
 extern uint64_t dbg_vdu_total(void);
@@ -87,6 +118,10 @@ extern uint64_t dbg_vdu_input_waits(void);
 /** Most recent error RISC OS raised, or NULL. */
 extern const char *dbg_vdu_last_error(void);
 
+/** Increments each time an error is raised, so a watcher can spot a new one
+    even when the message is identical to the last. */
+extern uint64_t dbg_vdu_error_seq(void);
+
 /** Most recent command passed to OS_CLI, or NULL. */
 extern const char *dbg_vdu_last_command(void);
 
@@ -97,6 +132,16 @@ extern const char *dbg_vdu_last_command(void);
  * @param pc     Address of the SWI instruction, for inline-string SWIs
  */
 extern void dbg_swi_hook(uint32_t swinum, uint32_t pc);
+
+/* ------------------------------------------------------------------ */
+/* Control channel (JSON-RPC 2.0 over stdin/stdout)                   */
+/* ------------------------------------------------------------------ */
+
+extern void dbg_rpc_start(void);
+extern void dbg_rpc_stop(void);
+extern void dbg_rpc_poll(void);
+extern int dbg_rpc_active(void);
+extern int dbg_rpc_quit_requested(void);
 
 #ifdef __cplusplus
 }

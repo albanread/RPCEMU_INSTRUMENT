@@ -44,12 +44,13 @@ static char ring[VDU_RING_SIZE];
 static uint64_t ring_total;		/**< Bytes ever written */
 
 static FILE *stream_file;
-static int stream_echo;
+static FILE *echo_file;
 
 static uint64_t input_waits;
 static char last_error[256];
 static char last_command[256];
 static int have_error;
+static uint64_t error_seq;
 static int have_command;
 
 void
@@ -58,9 +59,10 @@ dbg_vdu_init(void)
 	ring_total = 0;
 	input_waits = 0;
 	have_error = 0;
+	error_seq = 0;
 	have_command = 0;
 	stream_file = NULL;
-	stream_echo = 0;
+	echo_file = NULL;
 }
 
 void
@@ -78,9 +80,9 @@ dbg_vdu_set_file(FILE *f)
 }
 
 void
-dbg_vdu_set_echo(int enable)
+dbg_vdu_set_echo(FILE *f)
 {
-	stream_echo = enable;
+	echo_file = f;
 }
 
 uint64_t
@@ -93,6 +95,12 @@ uint64_t
 dbg_vdu_input_waits(void)
 {
 	return input_waits;
+}
+
+uint64_t
+dbg_vdu_error_seq(void)
+{
+	return error_seq;
 }
 
 const char *
@@ -123,8 +131,8 @@ vdu_emit(const char *data, size_t len)
 	if (stream_file != NULL) {
 		fwrite(data, 1, len, stream_file);
 	}
-	if (stream_echo) {
-		fwrite(data, 1, len, stdout);
+	if (echo_file != NULL) {
+		fwrite(data, 1, len, echo_file);
 	}
 }
 
@@ -269,6 +277,7 @@ dbg_swi_hook(uint32_t swinum, uint32_t pc)
 		   by a terminated message. */
 		guest_line(arm.reg[0] + 4, last_error, sizeof(last_error));
 		have_error = 1;
+		error_seq++;
 		rpclog("RISC OS error &%08X: %s\n",
 		       (unsigned) mem_read32(arm.reg[0]), last_error);
 		break;

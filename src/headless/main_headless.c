@@ -44,20 +44,24 @@
 #include "headless.h"
 #include "dbg.h"
 
+/** Where human-readable messages go. Moves to stderr when the control
+    channel takes over stdout. */
+static FILE *status_out;
+#define say(...)	fprintf(status_out, __VA_ARGS__)
+
 extern void headless_timers_poll(void);
 extern void headless_timers_reset(void);
 extern int headless_save_config;
 
-/** Total instructions retired since startup, accumulated from inscount. */
-static uint64_t total_instructions;
-
-/** Set to 0 to stop the CPU without stopping the machine. */
-static volatile int cpu_running = 1;
+/* The instruction total lives in the platform layer so frames can be stamped
+   with it; the run state lives in the debug core so the control channel can
+   drive it. */
+#define total_instructions	headless_instruction_total
 
 static void
 usage(const char *argv0)
 {
-	printf(
+	say(
 	"RPCEmu " VERSION " - headless\n"
 	"\n"
 	"Usage: %s [options]\n"
@@ -79,6 +83,11 @@ usage(const char *argv0)
 	"  --echo               Mirror the machine's console output to stdout\n"
 	"  --window             Show a live view window (does not affect the machine)\n"
 	"  --halted             Start with the CPU halted (video still runs)\n"
+	"  --rpc                Serve JSON-RPC 2.0 on stdin/stdout, one object per\n"
+	"                       line; status messages move to stderr. Send\n"
+	"                       {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe\"} for\n"
+	"                       the command surface.\n"
+	"  --frame-history N    Frames of screen history to keep (default 8)\n"
 	"  --save-config        Allow rpc.cfg to be rewritten on exit\n"
 	"  --quiet              Do not mirror errors to stderr\n"
 	"  --help               This message\n"
@@ -115,8 +124,8 @@ screenshot_numbered(const char *base, unsigned index)
 	snprintf(path, sizeof(path), "%.*s.%04u.png", (int) stem, base, index);
 
 	if (headless_screenshot(path) == 0) {
-		printf("rpcemu: wrote %s\n", path);
-		fflush(stdout);
+		say("rpcemu: wrote %s\n", path);
+		fflush(status_out);
 	}
 }
 
@@ -138,7 +147,13 @@ main(int argc, char **argv)
 	unsigned screenshot_index = 0;
 	int typed = 0;
 	int show_window = 0;
+	int start_halted = 0;
+	int use_rpc = 0;
+	int frame_history = 0;
+	int echo_output = 0;
 	int i;
+
+	status_out = stdout;
 
 	for (i = 1; i < argc; i++) {
 		const char *arg = argv[i];
@@ -165,11 +180,15 @@ main(int argc, char **argv)
 		} else if (strcmp(arg, "--vdu") == 0 && i + 1 < argc) {
 			vdu_path = argv[++i];
 		} else if (strcmp(arg, "--echo") == 0) {
-			dbg_vdu_set_echo(1);
+			echo_output = 1;
 		} else if (strcmp(arg, "--window") == 0) {
 			show_window = 1;
 		} else if (strcmp(arg, "--halted") == 0) {
-			cpu_running = 0;
+			start_halted = 1;
+		} else if (strcmp(arg, "--rpc") == 0) {
+			use_rpc = 1;
+		} else if (strcmp(arg, "--frame-history") == 0 && i + 1 < argc) {
+			frame_history = atoi(argv[++i]);
 		} else if (strcmp(arg, "--save-config") == 0) {
 			headless_save_config = 1;
 		} else if (strcmp(arg, "--quiet") == 0) {
@@ -185,6 +204,20 @@ main(int argc, char **argv)
 
 	headless_plt_init();
 	dbg_vdu_init();
+	dbg_cpu_init();
+
+	if (frame_history > 0) {
+		headless_frames_set_depth(frame_history);
+	}
+
+	/* stdout carries the protocol once the control channel is open, so
+	   nothing else may be written to it. */
+	if (use_rpc) {
+		status_out = stderr;
+	}
+	if (echo_output) {
+		dbg_vdu_set_echo(status_out);
+	}
 
 	if (vdu_path != NULL) {
 		vdu_file = fopen(vdu_path, "wb");
@@ -206,14 +239,18 @@ main(int argc, char **argv)
 	if (show_window) {
 		headless_window_open();
 	}
+	if (use_rpc) {
+		dbg_rpc_start();
+	}
 
-	printf("rpcemu: %s, %uMB RAM, %uMB VRAM, headless\n",
+	say("rpcemu: %s, %uMB RAM, %uMB VRAM, headless\n",
 	       models[machine.model].name_gui,
 	       config.mem_size, config.vram_size);
-	if (!cpu_running) {
-		printf("rpcemu: CPU halted at reset\n");
+	if (start_halted) {
+		dbg_cpu_halt(DBG_STOP_REQUEST);
+		say("rpcemu: CPU halted at reset\n");
 	}
-	fflush(stdout);
+	fflush(status_out);
 
 	if (screenshot_every > 0.0) {
 		next_screenshot_ns = (uint64_t) (screenshot_every * 1e9);
@@ -222,7 +259,7 @@ main(int argc, char **argv)
 	while (!quited) {
 		uint64_t now;
 
-		if (cpu_running) {
+		if (dbg_cpu_running()) {
 			execrpcemu();
 
 			/* inscount is a 32-bit counter the core keeps
@@ -245,12 +282,19 @@ main(int argc, char **argv)
 
 		now = rpcemu_nsec_timer_ticks();
 
+		/* Requests are parsed on the reader thread but acted on here,
+		   where the machine is between instructions. */
+		dbg_rpc_poll();
+		if (dbg_rpc_quit_requested()) {
+			quited = 1;
+		}
+
 		headless_type_poll(now);
 
 		if (type_text != NULL && !typed && now >= (uint64_t) (type_at * 1e9)) {
 			typed = 1;
-			printf("rpcemu: typing \"%s\"\n", type_text);
-			fflush(stdout);
+			say("rpcemu: typing \"%s\"\n", type_text);
+			fflush(status_out);
 			if (headless_type_string(type_text) < 0) {
 				fprintf(stderr,
 				        "rpcemu: some characters could not be typed\n");
@@ -295,35 +339,36 @@ main(int argc, char **argv)
 
 	if (screenshot_path != NULL && screenshot_every <= 0.0) {
 		if (headless_screenshot(screenshot_path) == 0) {
-			printf("rpcemu: wrote %s\n", screenshot_path);
+			say("rpcemu: wrote %s\n", screenshot_path);
 		} else {
 			fprintf(stderr, "rpcemu: could not write %s\n", screenshot_path);
 		}
 	}
 
-	printf("rpcemu: %llu instructions retired, PC &%08X\n",
+	say("rpcemu: %llu instructions retired, PC &%08X\n",
 	       (unsigned long long) total_instructions, (unsigned) PC);
-	printf("rpcemu: %llu bytes of console output, %llu input waits\n",
+	say("rpcemu: %llu bytes of console output, %llu input waits\n",
 	       (unsigned long long) dbg_vdu_total(),
 	       (unsigned long long) dbg_vdu_input_waits());
 	if (type_text != NULL) {
-		printf("rpcemu: typing sent %u key transitions, %u unechoed\n",
+		say("rpcemu: typing sent %u key transitions, %u unechoed\n",
 		       headless_type_events_sent(),
 		       headless_type_echo_timeouts());
 	}
 	if (dbg_vdu_last_command() != NULL) {
-		printf("rpcemu: last command: %s\n", dbg_vdu_last_command());
+		say("rpcemu: last command: %s\n", dbg_vdu_last_command());
 	}
 	if (dbg_vdu_last_error() != NULL) {
-		printf("rpcemu: last error: %s\n", dbg_vdu_last_error());
+		say("rpcemu: last error: %s\n", dbg_vdu_last_error());
 	}
-	fflush(stdout);
+	fflush(status_out);
 
 	dbg_vdu_close();
 	if (vdu_file != NULL) {
 		fclose(vdu_file);
 	}
 
+	dbg_rpc_stop();
 	headless_window_close();
 	endrpcemu();
 	headless_plt_close();

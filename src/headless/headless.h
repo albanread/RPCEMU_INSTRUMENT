@@ -44,16 +44,51 @@ typedef struct {
 	int		host_ysize;	/**< Height after any pixel doubling */
 	int		doublesize;	/**< Doubling flags in force for this frame */
 	uint64_t	serial;		/**< Increments once per delivered frame */
+	uint64_t	when_ns;	/**< Host time the frame was produced */
+	uint64_t	instructions;	/**< Instruction count when it was produced */
 } HeadlessFrame;
+
+/** Most frames the history can be asked to hold. */
+#define HEADLESS_FRAME_HISTORY_MAX	64
 
 /* Platform layer lifecycle */
 extern void headless_plt_init(void);
 extern void headless_plt_close(void);
 
-/* Frame store */
+/* Frame store.
+
+   A rotating history rather than a single frame: RISC OS screens are small,
+   so keeping the last few costs little, and it means a sequence can be
+   recovered after something interesting happens rather than having to
+   predict it in advance. */
 extern uint64_t headless_frame_serial(void);
+extern void headless_frames_set_depth(int frames);
+extern int headless_frames_available(void);
+
+/**
+ * Take a private copy of a frame from the history.
+ *
+ * @param age 0 for the newest frame, 1 for the one before it, and so on
+ * @param out Receives the frame; caller owns out->pixels
+ * @return 0 on success, non-zero if that far back is not held
+ */
+extern int headless_frame_copy_at(int age, HeadlessFrame *out);
 extern int headless_frame_copy(HeadlessFrame *out);
 extern void headless_frame_free(HeadlessFrame *frame);
+
+/**
+ * Write the whole held history to PNGs named <prefix>.NNNN.png.
+ *
+ * Numbered oldest first, so the files sort into playback order.
+ *
+ * @return Number of frames written, or -1 on failure
+ */
+extern int headless_frames_save(const char *prefix);
+
+/** Instruction total, maintained by the main loop for frame stamping. Moves
+    in units of 65536; use headless_instructions() for an exact figure. */
+extern uint64_t headless_instruction_total;
+extern uint64_t headless_instructions(void);
 
 /**
  * Write the most recent frame to a PNG file.

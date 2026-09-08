@@ -218,8 +218,33 @@ rpcemu_idle_process_events(void)
 /* ------------------------------------------------------------------ */
 
 static CRITICAL_SECTION frame_lock;
-static HeadlessFrame frame;
-static size_t frame_capacity;		/* words allocated in frame.pixels */
+
+/** One slot of the rotating frame history. */
+typedef struct {
+	HeadlessFrame	frame;
+	size_t		capacity;	/**< Words allocated in frame.pixels */
+} FrameSlot;
+
+static FrameSlot ring[HEADLESS_FRAME_HISTORY_MAX];
+static int ring_depth = 8;	/**< Slots in use */
+static int ring_next;		/**< Slot the next frame goes into */
+static int ring_count;		/**< Slots holding a frame, up to ring_depth */
+static uint64_t frame_serial;	/**< Serial of the newest frame */
+
+uint64_t headless_instruction_total;
+
+/**
+ * Instructions retired, exactly.
+ *
+ * headless_instruction_total only moves when the main loop folds inscount
+ * into it, in units of 65536; adding the unfolded remainder makes single
+ * steps visible.
+ */
+uint64_t
+headless_instructions(void)
+{
+	return headless_instruction_total + inscount;
+}
 
 uint64_t
 headless_frame_serial(void)
@@ -227,10 +252,83 @@ headless_frame_serial(void)
 	uint64_t serial;
 
 	EnterCriticalSection(&frame_lock);
-	serial = frame.serial;
+	serial = frame_serial;
 	LeaveCriticalSection(&frame_lock);
 
 	return serial;
+}
+
+/**
+ * Set how many frames of history to keep.
+ *
+ * Frames already held beyond the new depth are forgotten.
+ */
+void
+headless_frames_set_depth(int frames)
+{
+	if (frames < 1) {
+		frames = 1;
+	}
+	if (frames > HEADLESS_FRAME_HISTORY_MAX) {
+		frames = HEADLESS_FRAME_HISTORY_MAX;
+	}
+
+	EnterCriticalSection(&frame_lock);
+	ring_depth = frames;
+	ring_next = 0;
+	ring_count = 0;
+	LeaveCriticalSection(&frame_lock);
+}
+
+int
+headless_frames_available(void)
+{
+	int n;
+
+	EnterCriticalSection(&frame_lock);
+	n = ring_count;
+	LeaveCriticalSection(&frame_lock);
+
+	return n;
+}
+
+int
+headless_frame_copy_at(int age, HeadlessFrame *out)
+{
+	const FrameSlot *slot;
+	size_t words;
+	int index;
+
+	EnterCriticalSection(&frame_lock);
+
+	if (age < 0 || age >= ring_count) {
+		LeaveCriticalSection(&frame_lock);
+		return 1;
+	}
+
+	/* ring_next points past the newest, so the newest is at -1 */
+	index = ((ring_next - 1 - age) % ring_depth + ring_depth) % ring_depth;
+	slot = &ring[index];
+
+	if (slot->frame.pixels == NULL ||
+	    slot->frame.xsize <= 0 || slot->frame.ysize <= 0)
+	{
+		LeaveCriticalSection(&frame_lock);
+		return 1;
+	}
+
+	*out = slot->frame;
+	words = (size_t) slot->frame.xsize * (size_t) slot->frame.ysize;
+	out->pixels = malloc(words * sizeof(uint32_t));
+	if (out->pixels == NULL) {
+		LeaveCriticalSection(&frame_lock);
+		return 1;
+	}
+	memcpy(out->pixels, slot->frame.pixels, words * sizeof(uint32_t));
+
+	LeaveCriticalSection(&frame_lock);
+
+	return 0;
 }
 
 /**
@@ -244,27 +342,7 @@ headless_frame_serial(void)
 int
 headless_frame_copy(HeadlessFrame *out)
 {
-	size_t words;
-
-	EnterCriticalSection(&frame_lock);
-
-	if (frame.pixels == NULL || frame.xsize <= 0 || frame.ysize <= 0) {
-		LeaveCriticalSection(&frame_lock);
-		return 1;
-	}
-
-	*out = frame;
-	words = (size_t) frame.xsize * (size_t) frame.ysize;
-	out->pixels = malloc(words * sizeof(uint32_t));
-	if (out->pixels == NULL) {
-		LeaveCriticalSection(&frame_lock);
-		return 1;
-	}
-	memcpy(out->pixels, frame.pixels, words * sizeof(uint32_t));
-
-	LeaveCriticalSection(&frame_lock);
-
-	return 0;
+	return headless_frame_copy_at(0, out);
 }
 
 void
@@ -293,6 +371,33 @@ headless_screenshot(const char *path)
 	return ret;
 }
 
+int
+headless_frames_save(const char *prefix)
+{
+	const int held = headless_frames_available();
+	int written = 0;
+	int age;
+
+	/* Oldest first, so the numbering runs in playback order. */
+	for (age = held - 1; age >= 0; age--) {
+		HeadlessFrame f;
+		char path[600];
+
+		if (headless_frame_copy_at(age, &f) != 0) {
+			continue;
+		}
+
+		snprintf(path, sizeof(path), "%s.%04d.png", prefix, written);
+
+		if (png_write_xrgb(path, f.pixels, f.xsize, f.ysize, f.xsize) == 0) {
+			written++;
+		}
+		headless_frame_free(&f);
+	}
+
+	return written;
+}
+
 /**
  * Receive a completed frame from the VIDC scan-out thread.
  *
@@ -319,24 +424,36 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize,
 
 	EnterCriticalSection(&frame_lock);
 
-	if (words > frame_capacity) {
-		uint32_t *p = realloc(frame.pixels, words * sizeof(uint32_t));
+	{
+		FrameSlot *slot = &ring[ring_next];
 
-		if (p == NULL) {
-			LeaveCriticalSection(&frame_lock);
-			return;
+		if (words > slot->capacity) {
+			uint32_t *p = realloc(slot->frame.pixels,
+			                      words * sizeof(uint32_t));
+
+			if (p == NULL) {
+				LeaveCriticalSection(&frame_lock);
+				return;
+			}
+			slot->frame.pixels = p;
+			slot->capacity = words;
 		}
-		frame.pixels = p;
-		frame_capacity = words;
-	}
 
-	memcpy(frame.pixels, buffer, words * sizeof(uint32_t));
-	frame.xsize      = xsize;
-	frame.ysize      = ysize;
-	frame.host_xsize = host_xsize;
-	frame.host_ysize = host_ysize;
-	frame.doublesize = double_size;
-	frame.serial++;
+		memcpy(slot->frame.pixels, buffer, words * sizeof(uint32_t));
+		slot->frame.xsize        = xsize;
+		slot->frame.ysize        = ysize;
+		slot->frame.host_xsize   = host_xsize;
+		slot->frame.host_ysize   = host_ysize;
+		slot->frame.doublesize   = double_size;
+		slot->frame.serial       = ++frame_serial;
+		slot->frame.when_ns      = rpcemu_nsec_timer_ticks();
+		slot->frame.instructions = headless_instruction_total;
+
+		ring_next = (ring_next + 1) % ring_depth;
+		if (ring_count < ring_depth) {
+			ring_count++;
+		}
+	}
 
 	LeaveCriticalSection(&frame_lock);
 }
@@ -523,17 +640,24 @@ headless_plt_init(void)
 	InitializeCriticalSection(&video_mutex);
 	InitializeConditionVariable(&video_cond);
 
-	memset(&frame, 0, sizeof(frame));
-	frame_capacity = 0;
+	memset(ring, 0, sizeof(ring));
+	ring_next = 0;
+	ring_count = 0;
+	frame_serial = 0;
 }
 
 void
 headless_plt_close(void)
 {
+	int i;
+
 	EnterCriticalSection(&frame_lock);
-	free(frame.pixels);
-	frame.pixels = NULL;
-	frame_capacity = 0;
+	for (i = 0; i < HEADLESS_FRAME_HISTORY_MAX; i++) {
+		free(ring[i].frame.pixels);
+		ring[i].frame.pixels = NULL;
+		ring[i].capacity = 0;
+	}
+	ring_count = 0;
 	LeaveCriticalSection(&frame_lock);
 
 	DeleteCriticalSection(&frame_lock);

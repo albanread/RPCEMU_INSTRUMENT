@@ -54,6 +54,10 @@ static int unpredictable_count = 1000; ///< Limit logging of unpredictable instr
 
 #include "arm_common.h"
 
+#ifdef RPCEMU_DEBUG_HOOKS
+#include "dbg.h"
+#endif
+
 #undef refillpipeline
 #define refillpipeline()
 
@@ -551,6 +555,14 @@ arm_exec(void)
 		uint32_t opcode;
 		uint32_t lhs, rhs, dest;
 		uint32_t addr, data, offset, writeback;
+
+#ifdef RPCEMU_DEBUG_HOOKS
+		/* Stop before the instruction, not after, so the reported PC
+		   is the one that has not run yet. */
+		if (dbg_cpu_gate && !dbg_cpu_may_execute(PC)) {
+			break;
+		}
+#endif
 
 		if ((PC >> 12) != pccache) {
 			pccache = PC >> 12;
@@ -1884,7 +1896,11 @@ skip:
 
 		arm.reg[15] += 4;
 	}
-	inscount += 200;
 
-	return 200;
+	/* Account for what actually ran. Returning a fixed 200 after an early
+	   exit would drift the IOMD timer schedule every time the CPU is
+	   stopped, and the guest would see the clock jump. */
+	inscount += (uint32_t) linecyc;
+
+	return linecyc;
 }

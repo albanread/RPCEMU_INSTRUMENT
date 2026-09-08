@@ -345,7 +345,16 @@ execrpcemu(void)
 	cycles += 20000;
 
 	while (cycles > 0) {
-		cycles -= arm_exec();
+		const int executed = arm_exec();
+
+		if (executed == 0) {
+			/* The CPU stopped (debugger). Drop the remaining budget
+			   rather than looping on it: guest time must not
+			   accumulate while the CPU is not running. */
+			cycles = 0;
+			break;
+		}
+		cycles -= executed;
 
 		if (kcallback) {
 			kcallback--;
