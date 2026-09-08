@@ -1,0 +1,18 @@
+# Build output
+build/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.exp
+.ninja_*
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Emulator runtime state
+rpclog.txt
+cmos.ram.bak
+*.hdf
