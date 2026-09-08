@@ -73,6 +73,8 @@ static volatile LONG reader_eof;
 static JsonOut out;
 static uint64_t reported_error_seq;
 
+static void write_symbol_of(uint32_t addr);
+
 /* ------------------------------------------------------------------ */
 /* Transport                                                          */
 /* ------------------------------------------------------------------ */
@@ -252,8 +254,63 @@ write_status(void)
 		json_out_raw(&out, ",\"last_error\":");
 		json_out_string(&out, dbg_vdu_last_error());
 	}
+	json_out_printf(&out, ",\"breakpoints\":%d,\"symbols\":%d",
+	                dbg_break_count(), dbg_sym_count());
+	write_symbol_of(PC);
 
 	json_out_raw(&out, "}");
+}
+
+/**
+ * Append `,"sym":"name+offset"` for an address, if a symbol covers it.
+ *
+ * Every address the channel reports goes through this, so a client never has
+ * to hold a symbol table of its own to make sense of a stop.
+ */
+static void
+write_symbol_of(uint32_t addr)
+{
+	uint32_t offset = 0;
+	const char *name = dbg_sym_at(addr, &offset);
+
+	if (name == NULL) {
+		return;
+	}
+
+	json_out_raw(&out, ",\"sym\":");
+	json_out_string(&out, name);
+	json_out_printf(&out, ",\"sym_offset\":%u", (unsigned) offset);
+}
+
+/**
+ * Read an address given either as `addr` or as a `symbol` name.
+ *
+ * @return Non-zero on success; on failure *err says why
+ */
+static int
+resolve_addr(const JsonDoc *doc, int params, uint32_t *addr, const char **err)
+{
+	const JsonValue *sym = json_member(doc, params, "symbol");
+	const JsonValue *a = json_member(doc, params, "addr");
+
+	if (sym != NULL) {
+		const char *name = json_string(sym, NULL);
+
+		if (name == NULL || !dbg_sym_lookup(name, addr)) {
+			*err = "unknown symbol";
+			return 0;
+		}
+		return 1;
+	}
+
+	if (a != NULL) {
+		*addr = (uint32_t) json_int(a, 0);
+		return 1;
+	}
+
+	*err = "addr or symbol is required";
+
+	return 0;
 }
 
 /**
@@ -319,6 +376,22 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"frames.save\",\"params\":{\"prefix\":\"string\"},"
    "\"summary\":\"Write the whole held frame history, oldest first\"},"
  "{\"name\":\"frames.info\",\"summary\":\"How many frames are held, and the newest serial\"},"
+ "{\"name\":\"bp.set\",\"params\":{\"addr\":\"integer\",\"symbol\":\"string\","
+   "\"temporary\":\"bool\",\"skip\":\"ignore this many hits first\"}},"
+ "{\"name\":\"bp.clear\",\"params\":{\"id\":\"integer, 0 for all\"}},"
+ "{\"name\":\"bp.list\"},"
+ "{\"name\":\"run_until\",\"params\":{\"addr\":\"integer\",\"symbol\":\"string\"},"
+   "\"summary\":\"Continue until an address is reached\"},"
+ "{\"name\":\"catch.set\",\"params\":{\"data_abort\":\"bool\","
+   "\"prefetch_abort\":\"bool\",\"undefined\":\"bool\","
+   "\"from\":\"integer\",\"to\":\"integer\"},"
+   "\"summary\":\"Stop when code in the given range faults. Bound it to the "
+   "program under test: RISC OS takes aborts routinely\"},"
+ "{\"name\":\"fault.info\",\"summary\":\"The last fault, with registers as the "
+   "faulting instruction left them\"},"
+ "{\"name\":\"sym.load\",\"params\":{\"path\":\"ELF file\",\"bias\":\"integer\"}},"
+ "{\"name\":\"sym.lookup\",\"params\":{\"name\":\"string\"}},"
+ "{\"name\":\"sym.at\",\"params\":{\"addr\":\"integer\"}},"
  "{\"name\":\"quit\",\"summary\":\"Shut the emulator down\"}"
 "],\"events\":["
  "{\"name\":\"event/stopped\",\"summary\":\"The CPU stopped, with reason and PC\"},"
@@ -573,6 +646,180 @@ handle_request(char *line)
 		                (unsigned long long) headless_frame_serial());
 		reply_end();
 
+	} else if (strcmp(method, "bp.set") == 0) {
+		uint32_t addr;
+		const char *err = NULL;
+		int bpid;
+
+		if (!resolve_addr(&doc, params, &addr, &err)) {
+			reply_error(id, ERR_PARAMS, err);
+			return;
+		}
+		bpid = dbg_break_set(addr,
+		    json_bool(json_member(&doc, params, "temporary"), 0),
+		    (uint32_t) json_int(json_member(&doc, params, "skip"), 0));
+
+		if (bpid < 0) {
+			reply_error(id, ERR_INTERNAL, "too many breakpoints");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"id\":%d,\"addr\":%u", bpid,
+		                (unsigned) addr);
+		write_symbol_of(addr);
+		json_out_raw(&out, "}");
+		reply_end();
+
+	} else if (strcmp(method, "bp.clear") == 0) {
+		const int bpid = (int) json_int(json_member(&doc, params, "id"), 0);
+		const int removed = dbg_break_clear(bpid);
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"removed\":%d}", removed);
+		reply_end();
+
+	} else if (strcmp(method, "bp.list") == 0) {
+		int i;
+
+		reply_begin(id);
+		json_out_raw(&out, "{\"breakpoints\":[");
+		for (i = 0; i < dbg_break_count(); i++) {
+			uint32_t addr, hits;
+			int bpid, temporary;
+
+			if (!dbg_break_get(i, &addr, &bpid, &hits, &temporary)) {
+				continue;
+			}
+			json_out_printf(&out,
+			    "%s{\"id\":%d,\"addr\":%u,\"hits\":%u,\"temporary\":%s",
+			    (i != 0) ? "," : "", bpid, (unsigned) addr,
+			    (unsigned) hits, temporary ? "true" : "false");
+			write_symbol_of(addr);
+			json_out_raw(&out, "}");
+		}
+		json_out_raw(&out, "]}");
+		reply_end();
+
+	} else if (strcmp(method, "run_until") == 0) {
+		uint32_t addr;
+		const char *err = NULL;
+
+		if (!resolve_addr(&doc, params, &addr, &err)) {
+			reply_error(id, ERR_PARAMS, err);
+			return;
+		}
+		if (dbg_cpu_run_until(addr) < 0) {
+			reply_error(id, ERR_INTERNAL, "too many breakpoints");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"addr\":%u}", (unsigned) addr);
+		reply_end();
+
+	} else if (strcmp(method, "catch.set") == 0) {
+		DbgCatchConfig cfg;
+
+		dbg_catch_get(&cfg);
+		cfg.data_abort =
+		    json_bool(json_member(&doc, params, "data_abort"), cfg.data_abort);
+		cfg.prefetch_abort =
+		    json_bool(json_member(&doc, params, "prefetch_abort"), cfg.prefetch_abort);
+		cfg.undefined =
+		    json_bool(json_member(&doc, params, "undefined"), cfg.undefined);
+		cfg.from = (uint32_t)
+		    json_int(json_member(&doc, params, "from"), (long long) cfg.from);
+		cfg.to = (uint32_t)
+		    json_int(json_member(&doc, params, "to"), (long long) cfg.to);
+		cfg.enabled = cfg.data_abort || cfg.prefetch_abort || cfg.undefined;
+
+		dbg_catch_set(&cfg);
+
+		reply_begin(id);
+		json_out_printf(&out,
+		    "{\"enabled\":%s,\"data_abort\":%s,\"prefetch_abort\":%s,"
+		    "\"undefined\":%s,\"from\":%u,\"to\":%u}",
+		    cfg.enabled ? "true" : "false",
+		    cfg.data_abort ? "true" : "false",
+		    cfg.prefetch_abort ? "true" : "false",
+		    cfg.undefined ? "true" : "false",
+		    (unsigned) cfg.from, (unsigned) cfg.to);
+		reply_end();
+
+	} else if (strcmp(method, "fault.info") == 0) {
+		DbgFault fault;
+
+		reply_begin(id);
+		if (!dbg_fault_get(&fault)) {
+			json_out_raw(&out, "{\"faults\":0}");
+		} else {
+			int i;
+
+			json_out_printf(&out,
+			    "{\"faults\":%llu,\"kind\":\"%s\",\"pc\":%u,\"mode\":%u,\"r\":[",
+			    (unsigned long long) fault.count,
+			    dbg_fault_kind_name(fault.kind),
+			    (unsigned) fault.pc, (unsigned) (fault.mode & 0x1f));
+			for (i = 0; i < 16; i++) {
+				json_out_printf(&out, "%s%u", (i != 0) ? "," : "",
+				                (unsigned) fault.reg[i]);
+			}
+			json_out_printf(&out, "],\"cpsr\":%u",
+			                (unsigned) fault.reg[16]);
+			write_symbol_of(fault.pc);
+			json_out_raw(&out, "}");
+		}
+		reply_end();
+
+	} else if (strcmp(method, "sym.load") == 0) {
+		const char *path =
+		    json_string(json_member(&doc, params, "path"), NULL);
+		const uint32_t bias = (uint32_t)
+		    json_int(json_member(&doc, params, "bias"), 0);
+		const char *err = NULL;
+		int loaded;
+
+		if (path == NULL) {
+			reply_error(id, ERR_PARAMS, "path is required");
+			return;
+		}
+		loaded = dbg_sym_load(path, bias, &err);
+		if (loaded < 0) {
+			reply_error(id, ERR_PARAMS, (err != NULL) ? err : "load failed");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"loaded\":%d}", loaded);
+		reply_end();
+
+	} else if (strcmp(method, "sym.lookup") == 0) {
+		const char *name =
+		    json_string(json_member(&doc, params, "name"), NULL);
+		uint32_t addr;
+
+		if (name == NULL || !dbg_sym_lookup(name, &addr)) {
+			reply_error(id, ERR_PARAMS, "unknown symbol");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"addr\":%u,\"name\":", (unsigned) addr);
+		json_out_string(&out, name);
+		json_out_raw(&out, "}");
+		reply_end();
+
+	} else if (strcmp(method, "sym.at") == 0) {
+		const uint32_t addr = (uint32_t)
+		    json_int(json_member(&doc, params, "addr"), 0);
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"addr\":%u", (unsigned) addr);
+		write_symbol_of(addr);
+		json_out_raw(&out, "}");
+		reply_end();
+
 	} else if (strcmp(method, "quit") == 0) {
 		rpc_should_quit = 1;
 		reply_begin(id);
@@ -649,10 +896,11 @@ dbg_rpc_poll(void)
 	if (dbg_cpu_take_stop_event(&reason, &pc)) {
 		notify_begin("event/stopped");
 		json_out_printf(&out,
-		    "{\"reason\":\"%s\",\"pc\":%u,\"instructions\":%llu}",
+		    "{\"reason\":\"%s\",\"pc\":%u,\"instructions\":%llu",
 		    dbg_stop_reason_name(reason), (unsigned) pc,
 		    (unsigned long long) headless_instructions());
-		json_out_raw(&out, "}");
+		write_symbol_of(pc);
+		json_out_raw(&out, "}}");
 		emit_line();
 	}
 

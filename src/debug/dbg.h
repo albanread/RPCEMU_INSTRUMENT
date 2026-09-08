@@ -46,7 +46,8 @@ typedef enum {
 	DBG_STOP_NONE,
 	DBG_STOP_REQUEST,	/**< Asked to stop */
 	DBG_STOP_STEP,		/**< Step count reached */
-	DBG_STOP_BREAKPOINT
+	DBG_STOP_BREAKPOINT,
+	DBG_STOP_FAULT		/**< The program faulted */
 } DbgStopReason;
 
 /** Raised whenever the CPU must be checked before each instruction. Read
@@ -59,9 +60,105 @@ extern int dbg_cpu_running(void);
 extern void dbg_cpu_halt(DbgStopReason reason);
 extern void dbg_cpu_continue(void);
 extern void dbg_cpu_step(uint64_t count);
+extern int dbg_cpu_run_until(uint32_t addr);
 extern int dbg_cpu_may_execute(uint32_t pc);
 extern int dbg_cpu_take_stop_event(DbgStopReason *reason, uint32_t *pc);
 extern const char *dbg_stop_reason_name(DbgStopReason reason);
+
+/** Stop, recording a different address than the current PC. Used by the
+    fault trap, where the interesting address is the faulting instruction
+    rather than wherever the exception vector leads. */
+extern void dbg_cpu_halt_at(DbgStopReason reason, uint32_t pc);
+
+/** Re-evaluate whether the per-instruction gate needs to be up. Called when
+    breakpoints are added or removed. */
+extern void dbg_cpu_refresh_gate(void);
+
+/* ------------------------------------------------------------------ */
+/* Breakpoints and fault catching                                     */
+/* ------------------------------------------------------------------ */
+
+typedef enum {
+	DBG_FAULT_NONE,
+	DBG_FAULT_DATA_ABORT,
+	DBG_FAULT_PREFETCH_ABORT,
+	DBG_FAULT_UNDEFINED
+} DbgFaultKind;
+
+/**
+ * Which faults to stop on, and where.
+ *
+ * RISC OS takes aborts as a matter of course, so an unbounded trap would
+ * stop the machine constantly. `from`/`to` bound it to the code under test.
+ */
+typedef struct {
+	int		enabled;
+	int		data_abort;
+	int		prefetch_abort;
+	int		undefined;
+	uint32_t	from;
+	uint32_t	to;
+} DbgCatchConfig;
+
+/** The register file as the faulting instruction left it. */
+typedef struct {
+	DbgFaultKind	kind;
+	uint32_t	pc;		/**< Instruction that faulted */
+	uint32_t	mode;
+	uint32_t	reg[17];
+	uint64_t	count;		/**< Faults seen, of any kind */
+} DbgFault;
+
+extern void dbg_break_init(void);
+extern int dbg_break_set(uint32_t addr, int temporary, uint32_t skip);
+extern int dbg_break_clear(int id);
+extern int dbg_break_count(void);
+extern int dbg_break_present(uint32_t addr);
+extern int dbg_break_should_stop(uint32_t addr);
+extern int dbg_break_get(int index, uint32_t *addr, int *id, uint32_t *hits,
+                         int *temporary);
+
+extern void dbg_catch_set(const DbgCatchConfig *config);
+extern void dbg_catch_get(DbgCatchConfig *config);
+extern int dbg_fault_get(DbgFault *fault);
+extern void dbg_fault_hook(uint32_t mmode, uint32_t address, uint32_t pc);
+extern const char *dbg_fault_kind_name(DbgFaultKind kind);
+
+/* ------------------------------------------------------------------ */
+/* Symbols                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Load an ELF symbol table.
+ *
+ * The compiler links at a known base and keeps a real ELF beside the flat
+ * image, so addresses line up without the debugger having to guess where
+ * anything landed.
+ *
+ * @param path  ELF file to read
+ * @param bias  Added to every symbol value, for an image relocated after link
+ * @param error Receives a message on failure
+ * @return Number of symbols loaded, or -1 on failure
+ */
+extern int dbg_sym_load(const char *path, uint32_t bias, const char **error);
+
+extern void dbg_sym_clear(void);
+extern int dbg_sym_count(void);
+
+/** Address of a named symbol. Returns 0 if unknown. */
+extern int dbg_sym_lookup(const char *name, uint32_t *addr);
+
+/**
+ * Nearest symbol at or before an address.
+ *
+ * @param addr   Address to describe
+ * @param offset Receives how far past the symbol the address is
+ * @return Symbol name, or NULL if nothing covers it
+ */
+extern const char *dbg_sym_at(uint32_t addr, uint32_t *offset);
+
+extern int dbg_sym_get(int index, const char **name, uint32_t *addr,
+                       uint32_t *size);
 
 /* ------------------------------------------------------------------ */
 /* VDU stream capture                                                 */

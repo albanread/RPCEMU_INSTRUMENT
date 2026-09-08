@@ -5,13 +5,15 @@ JSON over the pipes, and never touch a window.
 """
 
 import json
+import os
 import subprocess
 import sys
 import threading
 import time
 import queue
 
-EXE = r"F:\RISCOSDEV\rpcemu\src\build\rpcemu-headless.exe"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+EXE = os.path.join(_HERE, os.pardir, "build", "rpcemu-headless.exe")
 CWD = r"F:\RISCOSDEV\rpcemu\win32\RPCEmu"
 
 

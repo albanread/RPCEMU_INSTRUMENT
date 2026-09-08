@@ -490,6 +490,12 @@ exception(uint32_t mmode, uint32_t address, uint32_t diff)
 	uint32_t link;
 	uint32_t irq_disable;
 
+#ifdef RPCEMU_DEBUG_HOOKS
+	/* Before the mode switch, while the register file still holds what the
+	   faulting instruction left. */
+	dbg_fault_hook(mmode, address, PC);
+#endif
+
 	/* If FIQ exception, disable FIQ and IRQ, otherwise disable just IRQ */
 	if (mmode == FIQ) {
 		irq_disable = (0x80 | 0x40);

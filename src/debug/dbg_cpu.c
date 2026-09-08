@@ -44,6 +44,11 @@ static DbgStopReason stop_reason = DBG_STOP_NONE;
 static uint32_t stop_pc;
 static int stop_pending;
 
+/* Set when resuming from a stop, so the breakpoint the machine is sitting on
+   does not fire again before the instruction under it has run. */
+static uint32_t skip_break_at;
+static int skip_break_armed;
+
 void
 dbg_cpu_init(void)
 {
@@ -51,6 +56,8 @@ dbg_cpu_init(void)
 	step_budget = 0;
 	stop_reason = DBG_STOP_NONE;
 	stop_pending = 0;
+	skip_break_armed = 0;
+	dbg_break_init();
 	dbg_cpu_gate = 0;
 }
 
@@ -90,10 +97,14 @@ dbg_cpu_halt(DbgStopReason reason)
 void
 dbg_cpu_continue(void)
 {
+	if (run_state == DBG_STOPPED) {
+		skip_break_at = stop_pc;
+		skip_break_armed = 1;
+	}
 	run_state = DBG_RUNNING;
 	step_budget = 0;
 	stop_reason = DBG_STOP_NONE;
-	dbg_cpu_gate = 0;
+	dbg_cpu_refresh_gate();
 }
 
 /**
@@ -106,10 +117,33 @@ dbg_cpu_step(uint64_t count)
 		count = 1;
 	}
 
+	if (run_state == DBG_STOPPED) {
+		skip_break_at = stop_pc;
+		skip_break_armed = 1;
+	}
 	run_state = DBG_STEPPING;
 	step_budget = count;
 	stop_reason = DBG_STOP_NONE;
 	dbg_cpu_gate = 1;
+}
+
+/**
+ * Run until an address is reached, or something else stops the CPU.
+ *
+ * A one-shot breakpoint rather than a special mode, so it behaves exactly
+ * like any other breakpoint if the address is hit by a different path.
+ */
+int
+dbg_cpu_run_until(uint32_t addr)
+{
+	const int id = dbg_break_set(addr, 1, 0);
+
+	if (id < 0) {
+		return -1;
+	}
+	dbg_cpu_continue();
+
+	return id;
 }
 
 /**
@@ -121,11 +155,41 @@ dbg_cpu_step(uint64_t count)
 int
 dbg_cpu_may_execute(uint32_t pc)
 {
-	switch (run_state) {
-	case DBG_STOPPED:
+	if (run_state == DBG_STOPPED) {
 		return 0;
+	}
 
-	case DBG_STEPPING:
+	/* Resuming from a breakpoint must get past the instruction it sits on.
+	   Without this the machine stops on the same breakpoint again without
+	   executing anything, and stepping off one is impossible. */
+	if (skip_break_armed) {
+		skip_break_armed = 0;
+		if (pc == skip_break_at) {
+			if (run_state == DBG_STEPPING) {
+				if (step_budget == 0) {
+					run_state = DBG_STOPPED;
+					stop_reason = DBG_STOP_STEP;
+					stop_pc = pc;
+					stop_pending = 1;
+					return 0;
+				}
+				step_budget--;
+			}
+			return 1;
+		}
+	}
+
+	/* Breakpoints come first: stepping onto one should report the
+	   breakpoint, which is what the user set it for. */
+	if (dbg_break_present(pc) && dbg_break_should_stop(pc)) {
+		run_state = DBG_STOPPED;
+		stop_reason = DBG_STOP_BREAKPOINT;
+		stop_pc = pc;
+		stop_pending = 1;
+		return 0;
+	}
+
+	if (run_state == DBG_STEPPING) {
 		if (step_budget == 0) {
 			run_state = DBG_STOPPED;
 			stop_reason = DBG_STOP_STEP;
@@ -134,15 +198,39 @@ dbg_cpu_may_execute(uint32_t pc)
 			return 0;
 		}
 		step_budget--;
-		return 1;
-
-	case DBG_RUNNING:
-	default:
-		/* The gate is only raised while stopped or stepping; getting
-		   here means it was lowered concurrently, which is harmless. */
-		dbg_cpu_gate = 0;
-		return 1;
 	}
+
+	return 1;
+}
+
+/**
+ * Stop, blaming a specific address.
+ *
+ * The fault trap needs this: the useful address is the instruction that
+ * faulted, not the exception vector the machine is about to jump to.
+ */
+void
+dbg_cpu_halt_at(DbgStopReason reason, uint32_t pc)
+{
+	run_state = DBG_STOPPED;
+	step_budget = 0;
+	stop_reason = reason;
+	stop_pc = pc;
+	stop_pending = 1;
+	dbg_cpu_gate = 1;
+}
+
+/**
+ * Decide whether the per-instruction gate needs to be up.
+ *
+ * It has to be up whenever the CPU is not simply running free, and whenever
+ * a breakpoint exists. Lowering it whenever possible keeps full-speed
+ * execution at one predictable branch per instruction.
+ */
+void
+dbg_cpu_refresh_gate(void)
+{
+	dbg_cpu_gate = (run_state != DBG_RUNNING) || (dbg_break_count() != 0);
 }
 
 /**
@@ -177,6 +265,7 @@ dbg_stop_reason_name(DbgStopReason reason)
 	case DBG_STOP_REQUEST:    return "request";
 	case DBG_STOP_STEP:       return "step";
 	case DBG_STOP_BREAKPOINT: return "breakpoint";
+	case DBG_STOP_FAULT:      return "fault";
 	default:                  return "none";
 	}
 }
