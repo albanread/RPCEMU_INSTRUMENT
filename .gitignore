@@ -16,3 +16,5 @@ compile_commands.json
 rpclog.txt
 cmos.ram.bak
 *.hdf
+vdu.txt
+*.png
