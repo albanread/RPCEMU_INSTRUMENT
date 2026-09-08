@@ -76,6 +76,13 @@ extern "C" {
 #define RPCEMU_NETWORKING
 #endif
 
+/* The headless frontend can be built without networking. An agent-controlled
+   machine should not reach the outside world by accident, and leaving it out
+   removes slirp and the TAP driver from the build. */
+#ifdef RPCEMU_NO_NETWORKING
+#undef RPCEMU_NETWORKING
+#endif
+
 /*This makes the RISC OS mouse pointer follow the host pointer exactly. Useful
   for Linux port, however use mouse capturing if possible - mousehack has some
   bugs*/

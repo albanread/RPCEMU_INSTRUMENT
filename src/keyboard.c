@@ -407,6 +407,22 @@ keyboard_data_read(void)
 }
 
 /**
+ * Report whether keyboard data is still on its way to the guest.
+ *
+ * keyboardsend() overwrites kbd.data unconditionally, so a byte injected
+ * while the previous one is still unread destroys it. Synthetic typing uses
+ * this to pace itself against the guest rather than against the host clock.
+ *
+ * @return Non-zero if bytes are queued or one is awaiting collection
+ */
+int
+keyboard_output_pending(void)
+{
+	return (kbd.queue.count != 0) ||
+	       ((kbd.stat & PS2_CONTROL_RX_FULL) != 0);
+}
+
+/**
  * Write to the IOMD PS/2 mouse Control register
  *
  * @param v Value to write

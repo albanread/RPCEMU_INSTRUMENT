@@ -26,6 +26,10 @@
 
 #include "arm.h"
 #include "arm_common.h"
+
+#ifdef RPCEMU_DEBUG_HOOKS
+#include "dbg.h"
+#endif
 #include "mem.h"
 #include "keyboard.h"
 #include "hostfs.h"
@@ -577,6 +581,12 @@ opSWI(uint32_t opcode)
 	} else if (swinum == SWI_OS_CallASWIR12) {
 		swinum = arm.reg[12] & 0xdffff;
 	}
+
+#ifdef RPCEMU_DEBUG_HOOKS
+	/* Observe the SWI before it is actioned. Must not disturb the machine:
+	   see dbg_vdu.c. */
+	dbg_swi_hook(swinum, PC);
+#endif
 
 	/* Intercept RISC OS Portable SWIs to enable RPCEmu to sleep when
 	   RISC OS is idle */
