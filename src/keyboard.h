@@ -46,6 +46,7 @@ extern const uint8_t *keyboard_map_key(uint32_t);
 extern int mouse_buttons_get(void);
 
 
+extern void mouse_position_get(int *x, int *y);
 extern void mouse_mouse_move(int x, int y);
 extern void mouse_mouse_move_relative(int dx, int dy);
 extern void mouse_mouse_press(int buttons);

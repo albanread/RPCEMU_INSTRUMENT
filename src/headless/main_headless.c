@@ -315,6 +315,7 @@ main(int argc, char **argv)
 		}
 
 		headless_type_poll(now);
+		headless_mouse_poll(now);
 
 		if (type_text != NULL && !typed && now >= (uint64_t) (type_at * 1e9)) {
 			typed = 1;

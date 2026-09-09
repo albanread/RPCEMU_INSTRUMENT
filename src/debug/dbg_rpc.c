@@ -263,6 +263,61 @@ write_status(void)
 }
 
 /**
+ * Where the pointer is, in the pixels the frame is published in.
+ */
+static void
+write_mouse_state_body(void)
+{
+	int x = 0;
+	int y = 0;
+	int buttons = 0;
+
+	headless_mouse_state(&x, &y, &buttons);
+
+	json_out_printf(&out,
+	    "\"x\":%d,\"y\":%d,\"select\":%s,\"menu\":%s,\"adjust\":%s,"
+	    "\"busy\":%s,\"moves\":%u,\"clicks\":%u",
+	    x, y,
+	    (buttons & MOUSE_SELECT) ? "true" : "false",
+	    (buttons & MOUSE_MENU) ? "true" : "false",
+	    (buttons & MOUSE_ADJUST) ? "true" : "false",
+	    headless_mouse_busy() ? "true" : "false",
+	    headless_mouse_moves(), headless_mouse_clicks());
+}
+
+static void
+write_mouse_state(void)
+{
+	json_out_raw(&out, "{");
+	write_mouse_state_body();
+	json_out_raw(&out, "}");
+}
+
+
+/**
+ * The RISC OS button a caller named.
+ *
+ * Both vocabularies are accepted. RISC OS people say Select, Menu and
+ * Adjust; everyone else says left, middle and right; and the two only line
+ * up if you know how the machine is configured to think about the pointer.
+ */
+static int
+parse_mouse_button(const char *name)
+{
+	if (name == NULL) {
+		return MOUSE_SELECT;
+	}
+
+	if (strcmp(name, "menu") == 0 || strcmp(name, "middle") == 0) {
+		return MOUSE_MENU;
+	}
+	if (strcmp(name, "adjust") == 0 || strcmp(name, "right") == 0) {
+		return MOUSE_ADJUST;
+	}
+
+	return MOUSE_SELECT;
+}
+/**
  * Append `,"sym":"name+offset"` for an address, if a symbol covers it.
  *
  * Every address the channel reports goes through this, so a client never has
@@ -371,6 +426,16 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"mem.write\",\"params\":{\"addr\":\"integer\",\"hex\":\"string\"}},"
  "{\"name\":\"type\",\"params\":{\"text\":\"string, \\\\n for Return\"},"
    "\"summary\":\"Type into the machine, paced against its echo\"},"
+ "{\"name\":\"mouse.move\",\"params\":{\"x\":\"integer\",\"y\":\"integer\"},"
+   "\"summary\":\"Put the pointer somewhere, in the same pixels a frame is "
+   "published in, origin top left\"},"
+ "{\"name\":\"mouse.click\",\"params\":{\"x\":\"integer\",\"y\":\"integer\","
+   "\"button\":\"select, menu or adjust\"},"
+   "\"summary\":\"Move, press and release, holding the button long enough for "
+   "the desktop to poll and see it\"},"
+ "{\"name\":\"mouse.down\",\"params\":{\"button\":\"string\"}},"
+ "{\"name\":\"mouse.up\",\"params\":{\"button\":\"string\"}},"
+ "{\"name\":\"mouse.status\"},"
  "{\"name\":\"vdu.read\",\"params\":{\"from\":\"integer stream offset\",\"max\":\"integer\"},"
    "\"summary\":\"Console output captured from the OS output SWIs\"},"
  "{\"name\":\"screenshot\",\"params\":{\"path\":\"string\"}},"
@@ -634,6 +699,59 @@ handle_request(char *line)
 
 		reply_begin(id);
 		json_out_printf(&out, "{\"queued\":%d}", queued);
+		reply_end();
+
+	} else if (strcmp(method, "mouse.move") == 0) {
+		const int x = (int) json_int(json_member(&doc, params, "x"), -1);
+		const int y = (int) json_int(json_member(&doc, params, "y"), -1);
+
+		if (x < 0 || y < 0) {
+			reply_error(id, ERR_PARAMS, "x and y are required");
+			return;
+		}
+
+		headless_mouse_move(x, y);
+
+		reply_begin(id);
+		write_mouse_state();
+		reply_end();
+
+	} else if (strcmp(method, "mouse.down") == 0 ||
+	           strcmp(method, "mouse.up") == 0) {
+		const int button = parse_mouse_button(
+		    json_string(json_member(&doc, params, "button"), "select"));
+
+		if (strcmp(method, "mouse.down") == 0) {
+			headless_mouse_down(button);
+		} else {
+			headless_mouse_up(button);
+		}
+
+		reply_begin(id);
+		write_mouse_state();
+		reply_end();
+
+	} else if (strcmp(method, "mouse.click") == 0) {
+		const int x = (int) json_int(json_member(&doc, params, "x"), -1);
+		const int y = (int) json_int(json_member(&doc, params, "y"), -1);
+		const int button = parse_mouse_button(
+		    json_string(json_member(&doc, params, "button"), "select"));
+
+		if (headless_mouse_click(x, y, button, headless_host_nsec()) != 0) {
+			reply_error(id, ERR_INTERNAL,
+			    "a click is still being delivered");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_raw(&out, "{\"queued\":true,");
+		write_mouse_state_body();
+		json_out_raw(&out, "}");
+		reply_end();
+
+	} else if (strcmp(method, "mouse.status") == 0) {
+		reply_begin(id);
+		write_mouse_state();
 		reply_end();
 
 	} else if (strcmp(method, "vdu.read") == 0) {

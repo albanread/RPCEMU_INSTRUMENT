@@ -152,6 +152,26 @@ extern void headless_type_set_interval(unsigned ms);
 extern unsigned headless_type_echo_timeouts(void);
 extern unsigned headless_type_events_sent(void);
 
+/* Synthetic pointer (headless/mouse_input.c).
+
+   Buttons are named the way RISC OS names them rather than the way a mouse
+   is built, because Menu and Adjust are what the desktop responds to and a
+   caller should not have to know how the machine is configured to think
+   about the pointer plugged into it. */
+#define MOUSE_SELECT	4
+#define MOUSE_MENU	2
+#define MOUSE_ADJUST	1
+
+extern void headless_mouse_move(int x, int y);
+extern void headless_mouse_down(int riscos_buttons);
+extern void headless_mouse_up(int riscos_buttons);
+extern int headless_mouse_click(int x, int y, int riscos_buttons, uint64_t now_ns);
+extern void headless_mouse_poll(uint64_t now_ns);
+extern int headless_mouse_busy(void);
+extern void headless_mouse_state(int *x, int *y, int *riscos_buttons);
+extern unsigned headless_mouse_moves(void);
+extern unsigned headless_mouse_clicks(void);
+
 /* Optional live view window (headless/window_win.c) */
 extern void headless_window_open(void);
 extern void headless_window_close(void);

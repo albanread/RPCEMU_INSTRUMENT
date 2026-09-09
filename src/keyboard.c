@@ -142,6 +142,23 @@ static struct {
 	} boundbox;
 } mouse_hack;
 
+/**
+ * Whether the guest has told us where the pointer may go.
+ *
+ * The bounding box arrives only when the guest issues OS_Word 21, 1, which
+ * the desktop does and a command prompt never does. Until then every field
+ * is zero, and clamping to it pins the pointer to the bottom left corner -
+ * which looks exactly like mouse input not working at all.
+ *
+ * So an empty box means "no limit given" rather than "a box of no size".
+ */
+static int
+boundbox_set(void)
+{
+	return mouse_hack.boundbox.right > mouse_hack.boundbox.left ||
+	       mouse_hack.boundbox.top > mouse_hack.boundbox.bottom;
+}
+
 static inline void
 keyboard_irq_rx_raise(void)
 {
@@ -800,6 +817,28 @@ mouse_process(void)
 }
 
 /**
+ * Where the pointer is, in the coordinates mouse_mouse_move() sets.
+ *
+ * Not the same as mouse_hack_get_pos(), which answers where the cursor
+ * sprite should be drawn: that is offset by the pointer's active point and
+ * is the wrong thing to tell a caller who is positioning the pointer rather
+ * than drawing it.
+ *
+ * @param x Receives frame pixels from the left
+ * @param y Receives frame pixels from the top
+ */
+void
+mouse_position_get(int *x, int *y)
+{
+	if (x != NULL) {
+		*x = mouse.x;
+	}
+	if (y != NULL) {
+		*y = mouse.y;
+	}
+}
+
+/**
  * Absolute coordinates used in mousehack mode
 
  * @param x
@@ -999,20 +1038,24 @@ mouse_get_osxy(int *x, int *y, int *osx, int *osy)
 	}
 
 	*osx = lmouse_x << 1;
-	if (*osx > mouse_hack.boundbox.right) {
-		*osx = mouse_hack.boundbox.right;
-	}
-	if (*osx < mouse_hack.boundbox.left) {
-		*osx = mouse_hack.boundbox.left;
+	if (boundbox_set()) {
+		if (*osx > mouse_hack.boundbox.right) {
+			*osx = mouse_hack.boundbox.right;
+		}
+		if (*osx < mouse_hack.boundbox.left) {
+			*osx = mouse_hack.boundbox.left;
+		}
 	}
 	*x = *osx >> xeig;
 
 	*osy = ((vidc_get_ysize() -1) << yeig) - (lmouse_y << 1);
-	if (*osy < mouse_hack.boundbox.bottom) {
-		*osy = mouse_hack.boundbox.bottom;
-	}
-	if (*osy > mouse_hack.boundbox.top) {
-		*osy = mouse_hack.boundbox.top;
+	if (boundbox_set()) {
+		if (*osy < mouse_hack.boundbox.bottom) {
+			*osy = mouse_hack.boundbox.bottom;
+		}
+		if (*osy > mouse_hack.boundbox.top) {
+			*osy = mouse_hack.boundbox.top;
+		}
 	}
 	*y = (((vidc_get_ysize() -1) << yeig) - *osy) >> yeig;
 
@@ -1187,11 +1230,13 @@ mouse_hack_osmouse(void)
 
 	/* Mouse X coordinate */
 	temp_x = mouse.x << 1;
-	if (temp_x > mouse_hack.boundbox.right) {
-		temp_x = mouse_hack.boundbox.right;
-	}
-	if (temp_x < mouse_hack.boundbox.left) {
-		temp_x = mouse_hack.boundbox.left;
+	if (boundbox_set()) {
+		if (temp_x > mouse_hack.boundbox.right) {
+			temp_x = mouse_hack.boundbox.right;
+		}
+		if (temp_x < mouse_hack.boundbox.left) {
+			temp_x = mouse_hack.boundbox.left;
+		}
 	}
 	arm.reg[0] = (uint32_t) temp_x;
 
@@ -1200,11 +1245,13 @@ mouse_hack_osmouse(void)
 		yeig = 2;
 	}
 	temp_y = (vidc_get_ysize() << yeig) - (mouse.y << 1);
-	if (temp_y < mouse_hack.boundbox.bottom) {
-		temp_y = mouse_hack.boundbox.bottom;
-	}
-	if (temp_y > mouse_hack.boundbox.top) {
-		temp_y = mouse_hack.boundbox.top;
+	if (boundbox_set()) {
+		if (temp_y < mouse_hack.boundbox.bottom) {
+			temp_y = mouse_hack.boundbox.bottom;
+		}
+		if (temp_y > mouse_hack.boundbox.top) {
+			temp_y = mouse_hack.boundbox.top;
+		}
 	}
 	arm.reg[1] = (uint32_t) temp_y;
 
