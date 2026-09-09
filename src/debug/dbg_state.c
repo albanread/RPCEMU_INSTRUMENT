@@ -124,19 +124,6 @@ rom_hash(void)
 }
 
 /**
- * Save and load the parts of the machine that live in no single module.
- */
-static void
-machine_state(SnapshotWrite w, SnapshotRead r, void *ctx)
-{
-	if (w != NULL) {
-		w(ctx, &iomd, sizeof(iomd));
-	} else {
-		r(ctx, &iomd, sizeof(iomd));
-	}
-}
-
-/**
  * Bytes in each of the two SIMM 0 banks.
  *
  * mem_rammask is derived from the configured size by mem_reset(), so it is
@@ -269,7 +256,7 @@ dbg_state_save(const char *path, uint64_t instructions, const char **error)
 
 	arm_state_save(io_write, &io);
 	cp15_state_save(io_write, &io);
-	machine_state(io_write, NULL, &io);
+	iomd_state_save(io_write, &io);
 	vidc_state_save(io_write, &io);
 	keyboard_state_save(io_write, &io);
 	i8042_state_save(io_write, &io);
@@ -349,7 +336,7 @@ dbg_state_load(const char *path, uint64_t *instructions, const char **error)
 
 	arm_state_load(io_read, &io);
 	cp15_state_load(io_read, &io);
-	machine_state(NULL, io_read, &io);
+	iomd_state_load(io_read, &io);
 	vidc_state_load(io_read, &io);
 	keyboard_state_load(io_read, &io);
 	i8042_state_load(io_read, &io);

@@ -151,6 +151,8 @@ main(int argc, char **argv)
 	int use_rpc = 0;
 	int frame_history = 0;
 	int echo_output = 0;
+	int virtual_clock = 0;
+	uint64_t ns_per_instruction = 0;
 	int i;
 
 	status_out = stdout;
@@ -185,6 +187,11 @@ main(int argc, char **argv)
 			show_window = 1;
 		} else if (strcmp(arg, "--halted") == 0) {
 			start_halted = 1;
+		} else if (strcmp(arg, "--deterministic") == 0) {
+			virtual_clock = 1;
+		} else if (strcmp(arg, "--ns-per-instruction") == 0 && i + 1 < argc) {
+			ns_per_instruction = strtoull(argv[++i], NULL, 0);
+			virtual_clock = 1;
 		} else if (strcmp(arg, "--rpc") == 0) {
 			use_rpc = 1;
 		} else if (strcmp(arg, "--frame-history") == 0 && i + 1 < argc) {
@@ -239,6 +246,12 @@ main(int argc, char **argv)
 
 	headless_timers_reset();
 
+	if (virtual_clock) {
+		headless_clock_set_virtual(1, ns_per_instruction);
+		say("rpcemu: virtual clock, %llu ns per instruction\n",
+		    (unsigned long long) headless_clock_ns_per_instruction());
+	}
+
 	if (show_window) {
 		headless_window_open();
 	}
@@ -283,7 +296,10 @@ main(int argc, char **argv)
 
 		headless_timers_poll();
 
-		now = rpcemu_nsec_timer_ticks();
+		/* Host time: run limits, typing and periodic screenshots are
+		   the host's business and must keep their pace whatever the
+		   guest's clock is doing. */
+		now = headless_host_nsec();
 
 		/* Requests are parsed on the reader thread but acted on here,
 		   where the machine is between instructions. */

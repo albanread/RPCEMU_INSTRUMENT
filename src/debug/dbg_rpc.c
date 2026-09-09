@@ -423,6 +423,11 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"snapshot.load\",\"params\":{\"path\":\"string\"},"
    "\"summary\":\"Restore it. Booting takes nine seconds; this takes "
    "milliseconds\"},"
+ "{\"name\":\"clock.set\",\"params\":{\"virtual\":\"bool\","
+   "\"ns_per_instruction\":\"integer, default 10\"},"
+   "\"summary\":\"Drive guest time from instructions retired rather than the "
+   "host clock, so timer interrupts land at fixed instruction counts and a "
+   "run is reproducible\"},"
  "{\"name\":\"quit\",\"summary\":\"Shut the emulator down\"}"
 "],\"events\":["
  "{\"name\":\"event/stopped\",\"summary\":\"The CPU stopped, with reason and PC\"},"
@@ -1185,6 +1190,21 @@ handle_request(char *line)
 		json_out_raw(&out, ",\"status\":");
 		write_status();
 		json_out_raw(&out, "}");
+		reply_end();
+
+	} else if (strcmp(method, "clock.set") == 0) {
+		const int enable =
+		    json_bool(json_member(&doc, params, "virtual"), 1);
+		const uint64_t rate = (uint64_t)
+		    json_int(json_member(&doc, params, "ns_per_instruction"), 0);
+
+		headless_clock_set_virtual(enable, rate);
+
+		reply_begin(id);
+		json_out_printf(&out,
+		    "{\"virtual\":%s,\"ns_per_instruction\":%llu}",
+		    headless_clock_is_virtual() ? "true" : "false",
+		    (unsigned long long) headless_clock_ns_per_instruction());
 		reply_end();
 
 	} else if (strcmp(method, "quit") == 0) {

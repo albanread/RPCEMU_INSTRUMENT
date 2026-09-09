@@ -114,6 +114,17 @@ extern int headless_screenshot(const char *path);
 extern int png_write_xrgb(const char *path, const uint32_t *pixels,
                           int width, int height, int stride_words);
 
+/* Clocks.
+
+   rpcemu_nsec_timer_ticks() is what the guest sees, and can be made a
+   function of instructions retired instead of host time; that is what makes
+   a run reproducible. headless_host_nsec() is always the real clock, for
+   pacing things that belong to the host. */
+extern uint64_t headless_host_nsec(void);
+extern void headless_clock_set_virtual(int enable, uint64_t ns_per_instruction);
+extern int headless_clock_is_virtual(void);
+extern uint64_t headless_clock_ns_per_instruction(void);
+
 /* Periodic machine events (IOMD tick, video frame), owned by the platform
    layer because it owns the host clock */
 extern void headless_timers_poll(void);

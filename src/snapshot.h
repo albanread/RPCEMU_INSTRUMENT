@@ -46,6 +46,9 @@ extern void arm_state_load(SnapshotRead r, void *ctx);
 extern void cp15_state_save(SnapshotWrite w, void *ctx);
 extern void cp15_state_load(SnapshotRead r, void *ctx);
 
+extern void iomd_state_save(SnapshotWrite w, void *ctx);
+extern void iomd_state_load(SnapshotRead r, void *ctx);
+
 extern void vidc_state_save(SnapshotWrite w, void *ctx);
 extern void vidc_state_load(SnapshotRead r, void *ctx);
 

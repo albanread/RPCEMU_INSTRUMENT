@@ -27,6 +27,7 @@
 #include "keyboard.h"
 #include "sound.h"
 #include "iomd.h"
+#include "snapshot.h"
 #include "arm.h"
 #include "cmos.h"
 #include "podules.h"
@@ -962,4 +963,33 @@ iomd_flyback(int flyback_new)
 		iomd.irqa.status |= IOMD_IRQA_FLYBACK;
 		updateirqs();
 	}
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+iomd_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, &iomd, sizeof(iomd));
+	w(ctx, &iomd_type, sizeof(iomd_type));
+	w(ctx, &sndon, sizeof(sndon));
+	w(ctx, &flyback, sizeof(flyback));
+
+	/* The timer epoch. Without it a restored machine measures its first
+	   interval from whenever the counters were last touched, which is a
+	   different moment entirely - and if the clock has been changed since,
+	   an arbitrary one. */
+	w(ctx, &old_timer_ticks, sizeof(old_timer_ticks));
+}
+
+void
+iomd_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, &iomd, sizeof(iomd));
+	r(ctx, &iomd_type, sizeof(iomd_type));
+	r(ctx, &sndon, sizeof(sndon));
+	r(ctx, &flyback, sizeof(flyback));
+	r(ctx, &old_timer_ticks, sizeof(old_timer_ticks));
 }

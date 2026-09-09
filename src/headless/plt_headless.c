@@ -125,15 +125,26 @@ rpcemu_log_platform(void)
 static LARGE_INTEGER perf_freq;
 static LARGE_INTEGER perf_origin;
 
+/* The virtual clock. When on, time as the guest sees it is a function of
+   instructions retired rather than of the host, which is what makes a run
+   reproducible: the IOMD timer and the video frame interrupt then land at
+   fixed instruction counts instead of wherever the host happened to be.
+
+   It also makes halting exact. A stopped CPU retires nothing, so guest time
+   simply does not advance, and the guest cannot tell it was stopped - no
+   resynchronisation needed, because there is nothing to resynchronise. */
+static int virtual_clock;
+static uint64_t ns_per_instruction = 10;	/* 100 MIPS, StrongARM-ish */
+static uint64_t virtual_offset;			/* advanced when the CPU idles */
+
 /**
- * Nanoseconds since the emulator started.
+ * Nanoseconds since the emulator started, on the host's clock.
  *
- * This is the single point at which the machine reads host time. Replacing
- * it with a function of the instruction count is what turns the emulator
- * deterministic (see RPCEMU-AGENT.md, "Virtual clock").
+ * For pacing things that belong to the host - typing, run limits, periodic
+ * screenshots - which must keep working at whatever rate the guest runs.
  */
 uint64_t
-rpcemu_nsec_timer_ticks(void)
+headless_host_nsec(void)
 {
 	LARGE_INTEGER now;
 
@@ -141,6 +152,47 @@ rpcemu_nsec_timer_ticks(void)
 
 	return (uint64_t) ((now.QuadPart - perf_origin.QuadPart) *
 	                   1000000000ULL / (uint64_t) perf_freq.QuadPart);
+}
+
+/**
+ * Nanoseconds as the emulated machine sees them.
+ *
+ * This is the only clock the guest can observe: IOMD's counters are driven
+ * from it, and so are the periodic interrupts. Everything about determinism
+ * turns on what this returns.
+ */
+uint64_t
+rpcemu_nsec_timer_ticks(void)
+{
+	if (virtual_clock) {
+		return virtual_offset +
+		       headless_instructions() * ns_per_instruction;
+	}
+
+	return headless_host_nsec();
+}
+
+void
+headless_clock_set_virtual(int enable, uint64_t ns_per_insn)
+{
+	virtual_clock = enable;
+	if (ns_per_insn != 0) {
+		ns_per_instruction = ns_per_insn;
+	}
+	virtual_offset = 0;
+	headless_timers_reset();
+}
+
+int
+headless_clock_is_virtual(void)
+{
+	return virtual_clock;
+}
+
+uint64_t
+headless_clock_ns_per_instruction(void)
+{
+	return ns_per_instruction;
 }
 
 /* Scheduling state for the two periodic machine events. Shared between the
@@ -205,11 +257,28 @@ headless_timers_reset(void)
 	video_timer_interval = 1000000000ULL / (uint64_t) (config.refresh > 0 ? config.refresh : 60);
 	iomd_timer_next  = now + IOMD_TIMER_INTERVAL_NS;
 	video_timer_next = now + video_timer_interval;
+
+	NOT_USED(now);
 }
 
 void
 rpcemu_idle_process_events(void)
 {
+	/* On the virtual clock an idle CPU retires no instructions, so time
+	   would never reach the next interrupt and the machine would wedge.
+	   Idling is therefore a jump straight to the next scheduled event,
+	   which is both correct and free: waiting costs nothing when the
+	   clock is ours. */
+	if (virtual_clock) {
+		const uint64_t now = rpcemu_nsec_timer_ticks();
+		const uint64_t next = (iomd_timer_next < video_timer_next) ?
+		                      iomd_timer_next : video_timer_next;
+
+		if (next > now) {
+			virtual_offset += next - now;
+		}
+	}
+
 	headless_timers_poll();
 }
 
@@ -459,7 +528,7 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize,
 		slot->frame.host_ysize   = host_ysize;
 		slot->frame.doublesize   = double_size;
 		slot->frame.serial       = ++frame_serial;
-		slot->frame.when_ns      = rpcemu_nsec_timer_ticks();
+		slot->frame.when_ns      = headless_host_nsec();
 		slot->frame.instructions = headless_instruction_total;
 
 		ring_next = (ring_next + 1) % ring_depth;
