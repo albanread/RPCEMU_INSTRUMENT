@@ -149,6 +149,30 @@ cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang && cmake --build build
 
 Run it from a directory holding `rpc.cfg`, `roms/` and `hostfs/`.
 
+### The guest portal module
+
+`tools/rpcagent.s` is built separately, because it is ARM code for the
+emulated machine rather than x86 for the host. ARMv4, to run on the StrongARM
+the emulator is configured as, and linked at zero because a RISC OS module
+header holds offsets from the module's own start:
+
+```bash
+clang --target=arm-none-eabi -mcpu=strongarm110 -c tools/rpcagent.s -o rpcagent.o
+ld.lld --image-base 0 --section-start .text=0 -o rpcagent.elf rpcagent.o
+llvm-objcopy -O binary rpcagent.elf "<runtime>/poduleroms/rpcagent,ffa"
+```
+
+`<runtime>` is the directory you run the emulator from — the one with
+`rpc.cfg` in it. Not the `poduleroms/` in this repository, which is upstream's
+copy of the source tree. RISC OS builds everything of filetype `&FFA` found
+there into the expansion card ROM and initialises it at boot, so that is the
+whole of the installation step.
+
+Keep `rpcagent.elf`. Modules run wherever RISC OS puts them, so the debugger
+cannot find the code by itself; `portal.status` reports the address the module
+called from, and `sym.load` with that as the bias puts its symbols in the
+right place. Without it the trace and breakpoints have nothing to aim at.
+
 ## Tests
 
 Four suites drive the whole surface against real code executing inside
