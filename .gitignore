@@ -23,3 +23,42 @@ testprog.elf
 testprog.o
 snapcheck.png
 *.state
+
+# ===========================================================================
+# Licensing safety rails
+#
+# This repository is published, and it sits inside a workspace that holds
+# RISC OS Open material licensed to the author but not redistributable: ROM
+# images, the HardDisc4 filesystem, and the DDE toolchain. The emulator is
+# run from this directory, so that material lands here in normal use. None of
+# it may ever be committed.
+#
+# Upstream RPCEmu's own placeholders stay tracked — ignoring a path does not
+# untrack a file already in the index.
+# ===========================================================================
+
+# ROM images. Upstream ships roms/roms.txt explaining what to put here; the
+# ROMs themselves are ROOL's to distribute, not ours.
+/roms/*
+!/roms/roms.txt
+
+# The shared disc. Point it at HardDisc4 and the DDE and it becomes 300MB of
+# somebody else's licensed software.
+/hostfs/*
+!/hostfs/Network/
+
+# Extracted RISC OS applications and boot structure, wherever they land.
+!Boot/
+!System/
+AcornC/
+
+# --- Python bytecode ------------------------------------------------------
+__pycache__/
+*.py[cod]
+
+# --- Editor and OS state --------------------------------------------------
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store

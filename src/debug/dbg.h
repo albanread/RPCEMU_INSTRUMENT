@@ -294,6 +294,10 @@ extern int dbg_sym_get(int index, const char **name, uint32_t *addr,
 #define SWI_OS_CLI_		0x05
 #define SWI_OS_Exit_		0x11
 #define SWI_OS_Heap_		0x1d
+
+/* The portal, in the host SWI chunk HostFS lives in. Slots 0/1/2/4 are
+   taken; this is slot 5. */
+#define SWI_RPCAgent		(0x56ac0 + 5)
 #define SWI_OS_GenerateError_	0x2b
 #define SWI_OS_WriteN		0x46
 #define SWI_OS_WriteI		0x100	/* &100 + n writes character n */
@@ -342,6 +346,40 @@ extern const char *dbg_vdu_last_command(void);
  * @param pc     Address of the SWI instruction, for inline-string SWIs
  */
 extern void dbg_swi_hook(uint32_t swinum, uint32_t pc);
+
+/* ------------------------------------------------------------------ */
+/* Guest portal                                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+  A module inside the guest, talking to the host through a SWI in the same
+  chunk HostFS uses. It exists for the one thing observation cannot do: ask
+  the operating system for something. The host has no safe context from
+  which to call into RISC OS; the module has one, and can call out.
+*/
+
+typedef struct {
+	int		present;	/**< The module has said hello */
+	uint32_t	module_version;
+	uint32_t	workspace;	/**< Where the module wants commands written */
+	int		pending;	/**< Queued, not yet offered to the module */
+	int		armed;		/**< Offered: exactly one callback is coming */
+	int		running;	/**< Collected, not yet finished */
+	int		have_result;
+	int		last_failed;	/**< OS_CLI returned an error */
+	uint32_t	last_return_code;
+	uint32_t	last_error_number;
+	char		last_error[256];
+	uint64_t	hellos;
+	uint64_t	polls;
+	uint64_t	commands;
+	char		command[512];
+} DbgPortalState;
+
+extern void dbg_portal_init(void);
+extern void dbg_portal_get(DbgPortalState *out);
+extern int dbg_portal_run(const char *command);
+extern void dbg_portal_swi(void);
 
 /* ------------------------------------------------------------------ */
 /* Snapshots                                                          */

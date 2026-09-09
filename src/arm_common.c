@@ -631,6 +631,13 @@ opSWI(uint32_t opcode)
 		mouse_hack_osmouse();
 		arm.reg[cpsr] &= ~VFLAG;
 
+#ifdef RPCEMU_DEBUG_HOOKS
+	} else if (swinum == SWI_RPCAgent) {
+		/* The guest portal, handled here rather than merely watched:
+		   falling through would raise a Supervisor exception and RISC
+		   OS would report an unknown SWI on every tick. */
+		dbg_portal_swi();
+#endif
 	} else if (swinum == ARCEM_SWI_HOSTFS) {
 		ARMul_State state;
 

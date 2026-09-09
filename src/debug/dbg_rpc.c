@@ -428,6 +428,12 @@ static const char DESCRIBE_JSON[] =
    "\"summary\":\"Drive guest time from instructions retired rather than the "
    "host clock, so timer interrupts land at fixed instruction counts and a "
    "run is reproducible\"},"
+ "{\"name\":\"portal.status\",\"summary\":\"Whether the guest module is loaded, "
+   "and what it last did\"},"
+ "{\"name\":\"portal.run\",\"params\":{\"command\":\"string\"},"
+   "\"summary\":\"Have the guest run a * command directly, with no keyboard. "
+   "The module runs it from a callback, the only context in which calling "
+   "OS_CLI is legitimate\"},"
  "{\"name\":\"quit\",\"summary\":\"Shut the emulator down\"}"
 "],\"events\":["
  "{\"name\":\"event/stopped\",\"summary\":\"The CPU stopped, with reason and PC\"},"
@@ -1205,6 +1211,68 @@ handle_request(char *line)
 		    "{\"virtual\":%s,\"ns_per_instruction\":%llu}",
 		    headless_clock_is_virtual() ? "true" : "false",
 		    (unsigned long long) headless_clock_ns_per_instruction());
+		reply_end();
+
+	} else if (strcmp(method, "portal.status") == 0) {
+		DbgPortalState p;
+
+		dbg_portal_get(&p);
+
+		reply_begin(id);
+		json_out_printf(&out,
+		    "{\"present\":%s,\"module_version\":%u,\"workspace\":%u,"
+		    "\"pending\":%s,\"armed\":%s,\"running\":%s,\"polls\":%llu,"
+		    "\"commands\":%llu",
+		    p.present ? "true" : "false",
+		    (unsigned) p.module_version, (unsigned) p.workspace,
+		    p.pending ? "true" : "false",
+		    p.armed ? "true" : "false",
+		    p.running ? "true" : "false",
+		    (unsigned long long) p.polls,
+		    (unsigned long long) p.commands);
+		if (p.have_result) {
+			json_out_printf(&out,
+			    ",\"failed\":%s,\"return_code\":%u",
+			    p.last_failed ? "true" : "false",
+			    (unsigned) p.last_return_code);
+		}
+		if (p.command[0] != ' ') {
+			json_out_raw(&out, ",\"last_command\":");
+			json_out_string(&out, p.command);
+		}
+		if (p.last_error[0] != ' ') {
+			json_out_printf(&out, ",\"error_number\":%u",
+			                (unsigned) p.last_error_number);
+			json_out_raw(&out, ",\"error\":");
+			json_out_string(&out, p.last_error);
+		}
+		json_out_raw(&out, "}");
+		reply_end();
+
+	} else if (strcmp(method, "portal.run") == 0) {
+		const char *command =
+		    json_string(json_member(&doc, params, "command"), NULL);
+		int rc;
+
+		if (command == NULL) {
+			reply_error(id, ERR_PARAMS, "command is required");
+			return;
+		}
+		rc = dbg_portal_run(command);
+		if (rc == 1) {
+			reply_error(id, ERR_INTERNAL,
+			            "the RPCAgent module is not loaded in the guest");
+			return;
+		}
+		if (rc != 0) {
+			reply_error(id, ERR_INTERNAL, "a command is already in flight");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_raw(&out, "{\"queued\":");
+		json_out_string(&out, command);
+		json_out_raw(&out, "}");
 		reply_end();
 
 	} else if (strcmp(method, "quit") == 0) {

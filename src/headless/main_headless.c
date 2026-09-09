@@ -215,6 +215,7 @@ main(int argc, char **argv)
 	dbg_watch_init();
 	dbg_trace_init();
 	dbg_heap_init();
+	dbg_portal_init();
 
 	if (frame_history > 0) {
 		headless_frames_set_depth(frame_history);
