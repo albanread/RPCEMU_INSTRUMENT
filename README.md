@@ -1,5 +1,13 @@
 # RPCEmu — Instrument Edition
 
+![NEW EXPERIMENT](https://img.shields.io/badge/NEW_EXPERIMENT-c1121f?style=for-the-badge&labelColor=c1121f)
+
+> [!CAUTION]
+> **NEW EXPERIMENT.** An unofficial fork, days old and under active change.
+> The instruments work and are covered by tests, but interfaces move without
+> warning. Not affiliated with or supported by RPCEmu upstream — report
+> nothing about this fork to them.
+
 <https://github.com/albanread/RPCEMU_INSTRUMENT>
 
 RPCEmu 0.9.5 with a headless frontend, a JSON-RPC control channel and a debug
@@ -111,12 +119,25 @@ recompiler stays with the Qt build.
   at the SWI.
 - **Snapshots** — the whole machine saved and restored. A booted machine
   comes back in 0.020s from a 1.5MB file, where booting takes nine seconds.
+- **A virtual clock** — guest time driven from instructions retired rather
+  than the host's, so the IOMD timer and the video frame interrupt land at
+  fixed instruction counts and a run from a snapshot is reproducible. The two
+  clocks are separated rather than replaced: `rpcemu_nsec_timer_ticks()` is
+  the only clock the guest can observe and becomes virtual, while run limits,
+  typing and periodic screenshots keep the host's — typing paced on guest time
+  would crawl or race depending on how fast the guest happened to be running.
+  Halting becomes exact as a side effect: a stopped CPU retires nothing, so
+  guest time does not advance and there is nothing to resynchronise on resume.
+- **The guest portal** — a 504-byte RISC OS module that gives the host what
+  observing from outside cannot: a legitimate execution context inside the
+  machine. There is no safe moment for the host to call into RISC OS, since it
+  would be calling from whatever context the machine happened to be in. The
+  module cannot be called, but it can call *out* and act on the answer, and
+  that inversion is the whole portal. Autoloading is free — anything of
+  filetype `&FFA` dropped into `poduleroms/` is built into the expansion card
+  ROM and initialised at every boot, which is how HostFS already arrives.
 - **Console capture** — output taken as text through the SWI interface.
 - `--window` for a live view when you want to watch.
-
-Not done yet: the virtual clock. IOMD and video timers still advance on host
-wall-clock time, so two runs from the same snapshot interleave differently and
-runs are not yet reproducible.
 
 ## Building
 
@@ -130,14 +151,15 @@ Run it from a directory holding `rpc.cfg`, `roms/` and `hostfs/`.
 
 ## Tests
 
-Three suites drive the whole surface against real code executing inside
+Four suites drive the whole surface against real code executing inside
 RISC OS. The first two build their own ARMv4 test image, so they need nothing
 prepared:
 
 ```bash
-python tools/debug_test.py       # breakpoint, step, fault trap
-python tools/instrument_test.py  # watchpoint, trace, stack, heap
-python tools/snapshot_test.py    # save, restore, and that restore still runs
+python tools/debug_test.py        # breakpoint, step, fault trap
+python tools/instrument_test.py   # watchpoint, trace, stack, heap
+python tools/snapshot_test.py     # save, restore, and that restore still runs
+python tools/determinism_test.py  # two runs from one snapshot, instruction-identical
 ```
 
 `tools/rpc_client.py` is the reference client for the control channel.
