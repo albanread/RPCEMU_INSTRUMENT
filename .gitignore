@@ -63,3 +63,6 @@ __pycache__/
 *.user
 .DS_Store
 rpcagent.elf
+
+# A second build directory, for building while another one is in use.
+build-dis/

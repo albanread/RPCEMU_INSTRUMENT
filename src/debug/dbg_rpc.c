@@ -410,6 +410,10 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"wp.clear\",\"params\":{\"id\":\"integer, 0 for all\"}},"
  "{\"name\":\"wp.list\"},"
  "{\"name\":\"wp.last\",\"summary\":\"The last watchpoint hit, with the old and new value\"},"
+ "{\"name\":\"dis.at\",\"params\":{\"addr\":\"integer\","
+   "\"symbol\":\"string\",\"count\":\"instructions, default 16\"},"
+   "\"summary\":\"Disassemble ARM code. trace.read carries the same text "
+   "for each entry, so a trace reads as instructions rather than hex\"},"
  "{\"name\":\"trace.start\",\"params\":{\"entries\":\"ring size\","
    "\"from\":\"integer\",\"to\":\"integer\"},"
    "\"summary\":\"Record executed instructions. Bound the range: unfiltered, a "
@@ -1107,6 +1111,55 @@ handle_request(char *line)
 		                (unsigned long long) dbg_trace_total());
 		reply_end();
 
+	} else if (strcmp(method, "dis.at") == 0) {
+		uint32_t addr;
+		const char *err = NULL;
+		long long count = json_int(json_member(&doc, params, "count"), 16);
+		long long i;
+
+		if (!resolve_addr(&doc, params, &addr, &err)) {
+			reply_error(id, ERR_PARAMS, err);
+			return;
+		}
+
+		if (count < 1 || count > 512) {
+			count = 16;
+		}
+
+		/* Word aligned, always: ARM instructions are, and disassembling
+		   from a misaligned address would produce confident nonsense. */
+		addr &= ~3u;
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"addr\":%u,\"instructions\":[",
+		                (unsigned) addr);
+
+		for (i = 0; i < count; i++) {
+			const uint32_t at = addr + (uint32_t) (i * 4);
+			/* Byte at a time through the same path mem.read uses, so
+			   a word that spans nothing readable comes back as zero
+			   rather than faulting the emulator. */
+			const uint32_t op =
+			    ((uint32_t) (mem_read8(at) & 0xff)) |
+			    ((uint32_t) (mem_read8(at + 1) & 0xff) << 8) |
+			    ((uint32_t) (mem_read8(at + 2) & 0xff) << 16) |
+			    ((uint32_t) (mem_read8(at + 3) & 0xff) << 24);
+			char text[96];
+
+			dbg_disasm(at, op, text, sizeof(text));
+
+			json_out_printf(&out, "%s{\"addr\":%u,\"opcode\":%u",
+			                (i != 0) ? "," : "", (unsigned) at,
+			                (unsigned) op);
+			write_symbol_of(at);
+			json_out_raw(&out, ",\"text\":");
+			json_out_string(&out, text);
+			json_out_raw(&out, "}");
+		}
+
+		json_out_raw(&out, "]}");
+		reply_end();
+
 	} else if (strcmp(method, "trace.read") == 0) {
 		long long max = json_int(json_member(&doc, params, "max"), 64);
 		DbgTraceEntry *entries;
@@ -1137,6 +1190,17 @@ handle_request(char *line)
 			    (unsigned) entries[i].opcode, (unsigned) entries[i].mode,
 			    (unsigned long long) entries[i].instruction);
 			write_symbol_of(entries[i].pc);
+
+			/* A trace of hex words is a trace nobody reads. */
+			{
+				char text[96];
+
+				dbg_disasm(entries[i].pc, entries[i].opcode,
+				           text, sizeof(text));
+				json_out_raw(&out, ",\"text\":");
+				json_out_string(&out, text);
+			}
+
 			json_out_raw(&out, "}");
 		}
 		json_out_raw(&out, "]}");

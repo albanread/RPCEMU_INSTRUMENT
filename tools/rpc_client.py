@@ -13,7 +13,11 @@ import time
 import queue
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(_HERE, os.pardir, "build", "rpcemu-headless.exe")
+# RPCEMU_EXE overrides, so a test can run against a build other than the
+# usual one without every test growing a path argument.
+EXE = os.environ.get(
+    "RPCEMU_EXE",
+    os.path.join(_HERE, os.pardir, "build", "rpcemu-headless.exe"))
 CWD = r"F:\RISCOSDEV\rpcemu\win32\RPCEmu"
 
 

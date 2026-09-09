@@ -401,6 +401,19 @@ extern int dbg_state_load(const char *path, uint64_t *instructions,
 
 /** Encode bytes as base64, for carrying binary through the text channel.
     Returns a malloc'd string the caller must free. */
+/**
+ * Disassemble one ARM instruction.
+ *
+ * Without this everything the instrumentation reports is a hex word: a
+ * breakpoint stops at a number and a trace is a column of them.
+ *
+ * @param addr   Where it lives, so branch targets can be worked out
+ * @param op     The instruction word
+ * @param out    Receives the text, always NUL terminated
+ * @param length Bytes available in out
+ */
+extern void dbg_disasm(uint32_t addr, uint32_t op, char *out, size_t length);
+
 extern char *dbg_base64_encode(const uint8_t *data, size_t len);
 
 /* ------------------------------------------------------------------ */
