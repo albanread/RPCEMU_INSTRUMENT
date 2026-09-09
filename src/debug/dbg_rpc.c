@@ -744,9 +744,18 @@ handle_request(char *line)
 		}
 
 		/* A client polling for a live view sends the serial it already
-		   has. A machine sitting at a prompt changes nothing, so saying
-		   "still that one" costs a few bytes instead of a megabyte. */
-		if (since != 0 && f.serial <= since) {
+		   has, and gets a few bytes back instead of a megabyte if that
+		   frame is still the one on offer.
+
+		   Identity, not ordering: asking for age 3 while holding the
+		   newest serial must not be answered "unchanged", because the
+		   frame at age 3 is a different frame and the client has not
+		   got it. Note also that the serial counts captures rather than
+		   changes - a frame lands every 16.7ms of guest time whether or
+		   not a pixel moved - so this fires when the CPU is halted and
+		   rarely otherwise. Shared memory, not this, is the answer to
+		   showing the screen continuously. */
+		if (since != 0 && f.serial == since) {
 			headless_frame_free(&f);
 			reply_begin(id);
 			json_out_printf(&out, "{\"serial\":%llu,\"unchanged\":true}",
