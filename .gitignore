@@ -21,3 +21,5 @@ vdu.txt
 booted.state
 testprog.elf
 testprog.o
+snapcheck.png
+*.state

@@ -376,6 +376,9 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"frames.save\",\"params\":{\"prefix\":\"string\"},"
    "\"summary\":\"Write the whole held frame history, oldest first\"},"
  "{\"name\":\"frames.info\",\"summary\":\"How many frames are held, and the newest serial\"},"
+ "{\"name\":\"frames.list\",\"summary\":\"The held frames oldest first, each with the "
+   "video mode that produced it. mode_serial only moves when the mode "
+   "actually changes, so it names the frame a mode change landed on\"},"
  "{\"name\":\"bp.set\",\"params\":{\"addr\":\"integer\",\"symbol\":\"string\","
    "\"temporary\":\"bool\",\"skip\":\"ignore this many hits first\"}},"
  "{\"name\":\"bp.clear\",\"params\":{\"id\":\"integer, 0 for all\"}},"
@@ -669,6 +672,44 @@ handle_request(char *line)
 		json_out_printf(&out, "{\"written\":%d,\"prefix\":", written);
 		json_out_string(&out, prefix);
 		json_out_raw(&out, "}");
+		reply_end();
+
+	} else if (strcmp(method, "frames.list") == 0) {
+		const int held = headless_frames_available();
+		int age;
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"held\":%d,\"frames\":[", held);
+
+		/* Oldest first, so the list reads in playback order. */
+		for (age = held - 1; age >= 0; age--) {
+			HeadlessFrame f;
+
+			if (headless_frame_copy_at(age, &f) != 0) {
+				continue;
+			}
+			json_out_printf(&out,
+			    "%s{\"serial\":%llu,\"age\":%d,\"when_ns\":%llu,"
+			    "\"instructions\":%llu,\"mode_serial\":%llu,"
+			    "\"width\":%d,\"height\":%d,\"bpp\":%u,\"bpp_code\":%u,"
+			    "\"doublesize\":%d,\"border\":%u,"
+			    "\"cursor_x\":%d,\"cursor_y\":%d,\"cursor_height\":%d,"
+			    "\"vidstart\":%u,\"palette\":%u}",
+			    (age != held - 1) ? "," : "",
+			    (unsigned long long) f.serial, age,
+			    (unsigned long long) f.when_ns,
+			    (unsigned long long) f.instructions,
+			    (unsigned long long) f.mode_serial,
+			    f.video.xsize, f.video.ysize,
+			    (unsigned) f.video.bits_per_pixel,
+			    (unsigned) f.video.bpp_code,
+			    f.video.doublesize, (unsigned) f.video.border_colour,
+			    f.video.cursorx, f.video.cursory, f.video.cursorheight,
+			    (unsigned) f.video.vidstart,
+			    (unsigned) f.video.palette_hash);
+			headless_frame_free(&f);
+		}
+		json_out_raw(&out, "]}");
 		reply_end();
 
 	} else if (strcmp(method, "frames.info") == 0) {

@@ -230,6 +230,8 @@ static int ring_depth = 8;	/**< Slots in use */
 static int ring_next;		/**< Slot the next frame goes into */
 static int ring_count;		/**< Slots holding a frame, up to ring_depth */
 static uint64_t frame_serial;	/**< Serial of the newest frame */
+static uint64_t mode_serial;	/**< Increments only when the video mode changes */
+static VidcFrameState last_mode;
 
 uint64_t headless_instruction_total;
 
@@ -439,6 +441,17 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize,
 			slot->capacity = words;
 		}
 
+		/* Ask the video hardware what it was doing for this frame, and
+		   advance the mode serial only when the answer changes: a
+		   per-frame serial would say nothing, one that moves only on a
+		   real change points straight at the frame it happened on. */
+		vidc_frame_state(&slot->frame.video);
+		if (memcmp(&slot->frame.video, &last_mode, sizeof(last_mode)) != 0) {
+			last_mode = slot->frame.video;
+			mode_serial++;
+		}
+		slot->frame.mode_serial = mode_serial;
+
 		memcpy(slot->frame.pixels, buffer, words * sizeof(uint32_t));
 		slot->frame.xsize        = xsize;
 		slot->frame.ysize        = ysize;
@@ -644,6 +657,8 @@ headless_plt_init(void)
 	ring_next = 0;
 	ring_count = 0;
 	frame_serial = 0;
+	mode_serial = 0;
+	memset(&last_mode, 0, sizeof(last_mode));
 }
 
 void

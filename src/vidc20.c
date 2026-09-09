@@ -1040,6 +1040,50 @@ resetbuffer(void)
 	memset(dirtybuffer, 0xff, 512 * 4);
 }
 
+/**
+ * Describe the video state behind the frame being scanned out.
+ *
+ * Called from the video thread while it holds the mutex, so thr is stable
+ * and is exactly the state that produced the pixels.
+ */
+void
+vidc_frame_state(VidcFrameState *out)
+{
+	uint32_t hash = 2166136261u;
+	int i;
+
+	for (i = 0; i < 256; i++) {
+		hash = (hash ^ thr.palette[i]) * 16777619u;
+	}
+
+	/* VIDC's depth field is a code of its own, not a bit count and not a
+	   log2 either: code 6 means 32bpp, and 5 is not used. Reporting the
+	   raw code alongside the decoded depth keeps both honest. */
+	out->bpp_code = thr.bpp;
+	switch (thr.bpp) {
+	case 0:  out->bits_per_pixel = 1;  break;
+	case 1:  out->bits_per_pixel = 2;  break;
+	case 2:  out->bits_per_pixel = 4;  break;
+	case 3:  out->bits_per_pixel = 8;  break;
+	case 4:  out->bits_per_pixel = 16; break;
+	case 6:  out->bits_per_pixel = 32; break;
+	default: out->bits_per_pixel = 0;  break;
+	}
+
+	out->xsize         = thr.vidc_xsize;
+	out->ysize         = thr.vidc_ysize;
+	out->host_xsize    = thr.host_xsize;
+	out->host_ysize    = thr.host_ysize;
+	out->doublesize    = thr.doublesize;
+	out->border_colour = thr.border_colour;
+	out->cursorx       = thr.cursorx;
+	out->cursory       = thr.cursory;
+	out->cursorheight  = thr.cursorheight;
+	out->vidstart      = thr.iomd_vidstart;
+	out->vidend        = thr.iomd_vidend;
+	out->palette_hash  = hash;
+}
+
 /* ------------------------------------------------------------------ */
 /* Snapshot                                                           */
 /* ------------------------------------------------------------------ */

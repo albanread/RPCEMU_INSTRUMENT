@@ -35,6 +35,24 @@ def check(label, got, want):
     print("%-40s %-18s %s" % (label, got, "ok" if ok else "EXPECTED %s" % (want,)))
 
 
+def screen_hash(m):
+    """Hash the display, once a frame newer than the current one has arrived.
+
+    VIDC is output only, so nothing the guest computes depends on it - but
+    the picture still has to come back, or a restored machine is a machine
+    you cannot look at.
+    """
+    before = m.call("frames.info")["serial"]
+    deadline = time.time() + 5
+    while m.call("frames.info")["serial"] == before and time.time() < deadline:
+        time.sleep(0.1)
+
+    path = os.path.join(CWD, "snapcheck.png")
+    m.call("screenshot", path=path)
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()[:16]
+
+
 def fingerprint(m):
     """A hash of the registers and several regions of memory."""
     h = hashlib.sha256()
@@ -66,14 +84,16 @@ def main():
           % (size / 1e6, save_time, saved["instructions"]))
 
     before = fingerprint(m)
+    screen_before = screen_hash(m)
     pc_before = m.call("regs.read")["pc"]
 
     # Let the machine run on, so it is demonstrably somewhere else.
     m.call("continue")
-    time.sleep(4)
+    m.call("type", text="Help Modules\n")
+    time.sleep(7)
     m.call("halt")
-    moved = fingerprint(m)
-    check("the machine moved on", moved != before, True)
+    check("the machine moved on", fingerprint(m) != before, True)
+    check("  and so did the screen", screen_hash(m) != screen_before, True)
 
     t0 = time.time()
     m.call("snapshot.load", path=SNAP)
@@ -86,6 +106,11 @@ def main():
           m.call("regs.read")["pc"], pc_before)
     check("  and the instruction count",
           m.call("status")["instructions"], saved["instructions"])
+
+    # The framebuffer bytes are restored as memory and the VIDC registers as
+    # a small struct, so the picture rebuilds itself from both. Nothing has
+    # to be papered over with the previous frame.
+    check("  and the display, pixel for pixel", screen_hash(m), screen_before)
 
     # A restored machine that cannot work is no use, however faithful.
     m.call("continue")

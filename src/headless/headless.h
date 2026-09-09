@@ -24,6 +24,8 @@
 
 #include <stdint.h>
 
+#include "vidc20.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,6 +48,12 @@ typedef struct {
 	uint64_t	serial;		/**< Increments once per delivered frame */
 	uint64_t	when_ns;	/**< Host time the frame was produced */
 	uint64_t	instructions;	/**< Instruction count when it was produced */
+
+	/* What the video hardware was doing when this frame was scanned out.
+	   A frame that carries its own mode is self-describing, and the serial
+	   makes a mode change visible as the exact frame it landed on. */
+	VidcFrameState	video;
+	uint64_t	mode_serial;
 } HeadlessFrame;
 
 /** Most frames the history can be asked to hold. */

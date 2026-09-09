@@ -32,6 +32,33 @@ extern "C" {
 #define VIDC_DOUBLE_Y		2
 #define VIDC_DOUBLE_BOTH	3
 
+/**
+ * What the video hardware was doing when a frame was produced.
+ *
+ * Read at scan-out, so it describes that frame rather than whatever the
+ * machine has moved on to. A frame that carries its own mode is
+ * self-describing: you can tell what it meant, and you can see exactly which
+ * frame a mode change landed on.
+ */
+typedef struct {
+	uint32_t	bpp_code;	/**< VIDC's own encoding, not a bit count */
+	uint32_t	bits_per_pixel;	/**< Decoded from it, 0 if the code is invalid */
+	int		xsize;		/**< VIDC displayed area */
+	int		ysize;
+	int		host_xsize;	/**< After any pixel doubling */
+	int		host_ysize;
+	int		doublesize;
+	uint32_t	border_colour;
+	int		cursorx;
+	int		cursory;
+	int		cursorheight;
+	uint32_t	vidstart;	/**< IOMD framebuffer pointers */
+	uint32_t	vidend;
+	uint32_t	palette_hash;	/**< Cheap identity for the 256-entry palette */
+} VidcFrameState;
+
+extern void vidc_frame_state(VidcFrameState *out);
+
 extern void initvideo(void);
 extern void closevideo(void);
 extern int vidc_get_xsize(void);
