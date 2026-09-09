@@ -51,7 +51,36 @@ def typed(m, text, settle=2.0):
     time.sleep(settle)
 
 
+def wait_still(m, timeout=25.0):
+    """Wait until the screen stops changing by itself.
+
+    Without this the whole test is worthless. A boot sequence counting down,
+    or a caret blinking, redraws on its own, and a click measured against a
+    moving screen reads as a success whatever it did - which is exactly how
+    an earlier run of this reported three passes while the machine was still
+    sitting in the ROM softloader.
+    """
+    deadline = time.time() + timeout
+    last = picture(m)
+    steady = 0
+
+    while time.time() < deadline:
+        time.sleep(0.6)
+        now = picture(m)
+        steady = steady + 1 if now == last else 0
+        last = now
+        if steady >= 3:
+            return True
+
+    return False
+
+
 def click(m, x, y, button, what, checks):
+    if not wait_still(m):
+        print("  %-34s %-14s SCREEN NEVER SETTLED" % (what, ""))
+        checks.append(False)
+        return False
+
     before = picture(m)
 
     m.call("mouse.click", x=x, y=y, button=button)
