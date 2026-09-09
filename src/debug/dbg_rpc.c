@@ -411,8 +411,10 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"wp.list\"},"
  "{\"name\":\"wp.last\",\"summary\":\"The last watchpoint hit, with the old and new value\"},"
  "{\"name\":\"dis.at\",\"params\":{\"addr\":\"integer\","
-   "\"symbol\":\"string\",\"count\":\"instructions, default 16\"},"
-   "\"summary\":\"Disassemble ARM code. trace.read carries the same text "
+   "\"symbol\":\"string\",\"count\":\"instructions, default 16, "
+   "clamped to 512\"},"
+   "\"summary\":\"Disassemble ARM code, defaulting to the pc. trace.read "
+   "carries the same text "
    "for each entry, so a trace reads as instructions rather than hex\"},"
  "{\"name\":\"trace.start\",\"params\":{\"entries\":\"ring size\","
    "\"from\":\"integer\",\"to\":\"integer\"},"
@@ -1117,13 +1119,25 @@ handle_request(char *line)
 		long long count = json_int(json_member(&doc, params, "count"), 16);
 		long long i;
 
-		if (!resolve_addr(&doc, params, &addr, &err)) {
+		/* Neither an address nor a symbol means the obvious place: a
+		   debugger asking to see code almost always means the code it
+		   is stopped in. */
+		if (json_member(&doc, params, "addr") == NULL &&
+		    json_member(&doc, params, "symbol") == NULL) {
+			addr = (uint32_t) PC;
+		} else if (!resolve_addr(&doc, params, &addr, &err)) {
 			reply_error(id, ERR_PARAMS, err);
 			return;
 		}
 
-		if (count < 1 || count > 512) {
-			count = 16;
+		/* Clamp rather than fall back. Asking for six hundred and
+		   quietly getting sixteen is the kind of thing that costs
+		   somebody an afternoon. */
+		if (count < 1) {
+			count = 1;
+		}
+		if (count > 512) {
+			count = 512;
 		}
 
 		/* Word aligned, always: ARM instructions are, and disassembling
@@ -1162,13 +1176,17 @@ handle_request(char *line)
 
 	} else if (strcmp(method, "trace.read") == 0) {
 		long long max = json_int(json_member(&doc, params, "max"), 64);
+		/* Clamped, not substituted, for the same reason as dis.at. */
 		DbgTraceEntry *entries;
 		uint32_t count = 0;
 		uint64_t first;
 		uint32_t i;
 
-		if (max < 1 || max > 4096) {
-			max = 64;
+		if (max < 1) {
+			max = 1;
+		}
+		if (max > 4096) {
+			max = 4096;
 		}
 		entries = malloc((size_t) max * sizeof(*entries));
 		if (entries == NULL) {
