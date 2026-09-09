@@ -34,6 +34,9 @@ static uint8_t		*base;
 static uint64_t		section_bytes;
 static char		section_name[64];
 static char		event_name[64];
+static uint64_t		reserve_base;	/**< Where emulator reservations start */
+static uint64_t		reserve_used;
+static uint64_t		reserve_bytes;
 
 /*
   Names are per-process so two emulators can run at once, and live in the
@@ -69,6 +72,13 @@ shmem_init(void)
 		const uint64_t slots_offset = bytes;
 
 		bytes += (uint64_t) SHMEM_SLOTS * (uint64_t) SHMEM_SLOT_BYTES;
+
+		/* Room for VRAM. Put the guest's framebuffer in the section
+		   itself and a viewer sees the pixels as the guest writes
+		   them, with nothing copied at all. */
+		reserve_base = bytes;
+		reserve_bytes = SHMEM_RESERVE_BYTES;
+		bytes += reserve_bytes;
 
 		section = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL,
 		                             PAGE_READWRITE,
@@ -116,6 +126,7 @@ shmem_init(void)
 		header->slot_bytes    = SHMEM_SLOT_BYTES;
 		header->slots_offset  = slots_offset;
 
+		reserve_used = 0;
 		section_bytes = bytes;
 	}
 
@@ -145,6 +156,107 @@ shmem_close(void)
 
 	header = NULL;
 	section_bytes = 0;
+	reserve_base = 0;
+	reserve_used = 0;
+	reserve_bytes = 0;
+}
+
+void *
+shmem_reserve(uint64_t bytes, uint64_t *offset)
+{
+	uint64_t at;
+
+	if (header == NULL) {
+		return NULL;
+	}
+
+	/* Page align, so a reservation can be handed to anything that cares. */
+	at = (reserve_base + reserve_used + 4095u) & ~4095ull;
+
+	if (at + bytes > reserve_base + reserve_bytes) {
+		rpclog("shmem: cannot reserve %llu bytes, %llu left\n",
+		       (unsigned long long) bytes,
+		       (unsigned long long) (reserve_base + reserve_bytes - at));
+		return NULL;
+	}
+
+	reserve_used = (at - reserve_base) + bytes;
+
+	if (offset != NULL) {
+		*offset = at;
+	}
+
+	return base + at;
+}
+
+int
+shmem_owns(const void *p)
+{
+	const uint8_t *q = (const uint8_t *) p;
+
+	if (base == NULL || p == NULL) {
+		return 0;
+	}
+
+	return (q >= base) && (q < base + section_bytes);
+}
+
+void
+shmem_set_vram(uint64_t offset, uint64_t bytes)
+{
+	if (header == NULL) {
+		return;
+	}
+
+	header->vram_offset = offset;
+	header->vram_bytes  = bytes;
+}
+
+/**
+ * Publish what the video hardware is doing.
+ *
+ * thread: video
+ */
+void
+shmem_publish_video(const VidcSharedState *state, uint64_t serial)
+{
+	ShmemVideo *v;
+	int i;
+
+	if (header == NULL || state == NULL) {
+		return;
+	}
+
+	v = &header->video;
+
+	InterlockedIncrement((volatile LONG *) &v->seq);
+	MemoryBarrier();
+
+	v->bpp_code       = state->bpp_code;
+	v->bits_per_pixel = state->bits_per_pixel;
+	v->video_in_dram  = (uint32_t) state->video_in_dram;
+	v->fb_offset      = state->fb_offset;
+	v->fb_bytes       = state->fb_bytes;
+	v->xsize          = state->xsize;
+	v->ysize          = state->ysize;
+	v->host_xsize     = state->host_xsize;
+	v->host_ysize     = state->host_ysize;
+	v->doublesize     = state->doublesize;
+	v->border         = state->border_colour;
+	v->cursor_x       = state->cursorx;
+	v->cursor_y       = state->cursory;
+	v->cursor_height  = state->cursorheight;
+	v->serial         = serial;
+
+	for (i = 0; i < 256; i++) {
+		v->palette[i] = state->palette[i];
+	}
+	for (i = 0; i < 3; i++) {
+		v->cursor_palette[i] = state->cursor_palette[i];
+	}
+
+	MemoryBarrier();
+	InterlockedIncrement((volatile LONG *) &v->seq);
 }
 
 int

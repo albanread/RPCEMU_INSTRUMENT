@@ -1084,6 +1084,58 @@ vidc_frame_state(VidcFrameState *out)
 	out->palette_hash  = hash;
 }
 
+/**
+ * Describe the guest's framebuffer as the hardware sees it.
+ *
+ * thread: video
+ *
+ * Read from the video thread's own copy of VIDC's state, which is what
+ * scan-out uses, so this describes the frame that is about to be drawn
+ * rather than whatever the machine has moved on to.
+ */
+void
+vidc_shared_state(VidcSharedState *out)
+{
+	int i;
+
+	out->bpp_code = thr.bpp;
+	switch (thr.bpp) {
+	case 0:  out->bits_per_pixel = 1;  break;
+	case 1:  out->bits_per_pixel = 2;  break;
+	case 2:  out->bits_per_pixel = 4;  break;
+	case 3:  out->bits_per_pixel = 8;  break;
+	case 4:  out->bits_per_pixel = 16; break;
+	case 6:  out->bits_per_pixel = 32; break;
+	default: out->bits_per_pixel = 0;  break;
+	}
+
+	/* The same choice scan-out makes: bit 28 of vidinit says the
+	   framebuffer is in DRAM rather than VRAM. */
+	out->video_in_dram = (thr.iomd_vidinit & 0x10000000) ? 1 : 0;
+	out->fb_offset     = thr.iomd_vidinit & 0x7fffff;
+
+	out->fb_bytes = (uint32_t) ((((uint64_t) thr.vidc_xsize *
+	                              (uint64_t) thr.vidc_ysize *
+	                              (uint64_t) out->bits_per_pixel) + 7u) / 8u);
+
+	out->xsize         = thr.vidc_xsize;
+	out->ysize         = thr.vidc_ysize;
+	out->host_xsize    = thr.host_xsize;
+	out->host_ysize    = thr.host_ysize;
+	out->doublesize    = thr.doublesize;
+	out->border_colour = thr.border_colour;
+	out->cursorx       = thr.cursorx;
+	out->cursory       = thr.cursory;
+	out->cursorheight  = thr.cursorheight;
+
+	for (i = 0; i < 256; i++) {
+		out->palette[i] = thr.palette[i];
+	}
+	for (i = 0; i < 3; i++) {
+		out->cursor_palette[i] = thr.cursor_palette[i];
+	}
+}
+
 /* ------------------------------------------------------------------ */
 /* Snapshot                                                           */
 /* ------------------------------------------------------------------ */

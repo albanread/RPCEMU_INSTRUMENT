@@ -34,6 +34,10 @@
 
 
 #include "rpcemu.h"
+
+#ifdef RPCEMU_DEBUG_HOOKS
+#include "headless/shmem.h"
+#endif
 #include "snapshot.h"
 #include "mem.h"
 #include "vidc20.h"
@@ -483,6 +487,10 @@ endrpcemu(void)
         iomd_end();
         fdc_image_save(discname[0], 0);
         fdc_image_save(discname[1], 1);
+#ifdef RPCEMU_DEBUG_HOOKS
+        /* VRAM may live inside the shared section rather than the heap. */
+        if (!shmem_owns(vram))
+#endif
         free(vram);
         free(ram00);
         free(ram01);

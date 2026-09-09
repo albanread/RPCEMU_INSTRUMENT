@@ -65,11 +65,16 @@ print("magic %r version %d header_bytes %d slots %d x %d bytes at %d" % (
     struct.pack("<I", magic), version, header_bytes, slot_count, slot_bytes, slots_offset))
 assert struct.pack("<I", magic) == b"RPCS"
 SLOTSZ = struct.calcsize(SLOT)
-print("slot struct %d bytes; header says slots array = %d" % (SLOTSZ, header_bytes - 96))
-assert (header_bytes - 96) == SLOTSZ * slot_count, "layout mismatch"
+assert SLOTSZ == info["slot_struct_bytes"], (
+    "slot layout: we think %d bytes, the emulator says %d"
+    % (SLOTSZ, info["slot_struct_bytes"]))
+# Derived, not hardcoded: the header grows when the emulator learns to
+# publish something new, and a test that assumes an offset goes quietly wrong.
+SLOTS_AT = header_bytes - SLOTSZ * slot_count
+print("slot struct %d bytes; slots array at header+%d" % (SLOTSZ, SLOTS_AT))
 
 def read_slot(i):
-    return struct.unpack(SLOT, rd(96 + i*SLOTSZ, SLOTSZ))
+    return struct.unpack(SLOT, rd(SLOTS_AT + i*SLOTSZ, SLOTSZ))
 
 def grab():
     """Seqlock read of the newest frame."""

@@ -59,6 +59,37 @@ typedef struct {
 
 extern void vidc_frame_state(VidcFrameState *out);
 
+/**
+ * Everything needed to draw the screen from the guest's own framebuffer.
+ *
+ * VidcFrameState describes a frame that has already been expanded to
+ * xRGB8888. This describes the frame before that: where the pixels are, how
+ * they are packed, and what the palette turns them into. A renderer with a
+ * GPU wants this one, because expanding 1bpp to 32bpp is a texture lookup it
+ * can do for free, and 20KB of packed pixels is a thirty-second of the
+ * bandwidth of 640KB of expanded ones.
+ */
+typedef struct {
+	uint32_t	bpp_code;	/**< VIDC's own encoding */
+	uint32_t	bits_per_pixel;	/**< Decoded, 0 if the code is invalid */
+	int		video_in_dram;	/**< Framebuffer is in DRAM, not VRAM */
+	uint32_t	fb_offset;	/**< Byte offset within that bank */
+	uint32_t	fb_bytes;	/**< Bytes the visible area occupies */
+	int		xsize;
+	int		ysize;
+	int		host_xsize;
+	int		host_ysize;
+	int		doublesize;
+	uint32_t	border_colour;
+	int		cursorx;
+	int		cursory;
+	int		cursorheight;
+	uint32_t	palette[256];		/**< Host xRGB, ready to index */
+	uint32_t	cursor_palette[3];
+} VidcSharedState;
+
+extern void vidc_shared_state(VidcSharedState *out);
+
 extern void initvideo(void);
 extern void closevideo(void);
 extern int vidc_get_xsize(void);

@@ -396,8 +396,12 @@ main(int argc, char **argv)
 	dbg_rpc_stop();
 	headless_window_close();
 	endrpcemu();
-	shmem_close();
 	headless_plt_close();
+
+	/* Last: the video thread and the machine both read memory that lives
+	   in the section, so unmapping it before they stop is a use after
+	   free with extra steps. */
+	shmem_close();
 
 	return 0;
 }

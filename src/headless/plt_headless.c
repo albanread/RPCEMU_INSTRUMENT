@@ -562,6 +562,16 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize,
 			shmem_publish_frame(slot->frame.pixels,
 			                    (uint32_t) (words * sizeof(uint32_t)),
 			                    &meta);
+
+			/* And the same frame described as the hardware holds
+			   it: packed pixels, a palette and a mode. A renderer
+			   with a GPU wants that and not the expansion. */
+			{
+				VidcSharedState shared;
+
+				vidc_shared_state(&shared);
+				shmem_publish_video(&shared, slot->frame.serial);
+			}
 		}
 	}
 

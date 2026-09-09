@@ -36,12 +36,14 @@
 
 #include <stdint.h>
 
+#include "vidc20.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define SHMEM_MAGIC		0x53435052u	/* 'RPCS' */
-#define SHMEM_VERSION		1
+#define SHMEM_VERSION		2
 
 /** Frames the shared ring holds. */
 #define SHMEM_SLOTS		8
@@ -55,6 +57,15 @@ extern "C" {
   hold the frame means the publisher never has to decide to skip one.
 */
 #define SHMEM_SLOT_BYTES	(8u * 1024u * 1024u)
+
+/*
+  Room set aside inside the section for the emulator's own allocations.
+
+  Eight megabytes, which is exactly the RiscPC's maximum VRAM: putting the
+  framebuffer here rather than in a private malloc is what lets a viewer draw
+  from the guest's own pixels instead of from a copy of them.
+*/
+#define SHMEM_RESERVE_BYTES	(8u * 1024u * 1024u)
 
 /**
  * What the video hardware was doing for one frame, flattened.
@@ -87,6 +98,45 @@ typedef struct {
 	int32_t		cursor_height;
 	int32_t		pad;
 } ShmemSlot;
+
+/**
+ * The guest's framebuffer, described well enough to draw from directly.
+ *
+ * A renderer with a GPU never needs the expanded frames at all: it maps the
+ * VRAM this header points at, uploads the packed pixels and this palette,
+ * and lets a shader do the depth expansion, the pixel doubling and the
+ * scaling in one pass. For a 1bpp mode that is 20KB a frame instead of
+ * 640KB, and no CPU touches a pixel on either side.
+ *
+ * Written under the same kind of sequence lock as a frame slot.
+ */
+typedef struct {
+	uint32_t	seq;		/**< Even: stable. Odd: being written. */
+	uint32_t	bpp_code;	/**< VIDC's own encoding */
+	uint32_t	bits_per_pixel;	/**< 1, 2, 4, 8, 16 or 32; 0 if invalid */
+	uint32_t	video_in_dram;	/**< Framebuffer is in DRAM, not VRAM */
+
+	uint32_t	fb_offset;	/**< Byte offset within that bank */
+	uint32_t	fb_bytes;	/**< Bytes the visible area occupies */
+	int32_t		xsize;
+	int32_t		ysize;
+
+	int32_t		host_xsize;
+	int32_t		host_ysize;
+	int32_t		doublesize;	/**< Bit 0 doubles width, bit 1 height */
+	uint32_t	border;
+
+	int32_t		cursor_x;
+	int32_t		cursor_y;
+	int32_t		cursor_height;
+	uint32_t	pad;
+
+	uint64_t	serial;		/**< Frame serial this describes */
+
+	uint32_t	palette[256];	/**< Host xRGB, ready to index */
+	uint32_t	cursor_palette[3];
+	uint32_t	pad2;
+} ShmemVideo;
 
 /**
  * The section header.
@@ -122,6 +172,8 @@ typedef struct {
 	uint64_t	vram_bytes;
 	uint32_t	ram_banks;	/**< Contiguous banks within ram_bytes */
 	uint32_t	ram_bank_bytes;
+
+	ShmemVideo	video;
 
 	ShmemSlot	slots[SHMEM_SLOTS];
 } ShmemHeader;
@@ -160,6 +212,38 @@ extern uint64_t shmem_section_bytes(void);
  */
 extern void shmem_publish_frame(const uint32_t *pixels, uint32_t byte_length,
                                 const ShmemSlot *meta);
+
+/**
+ * Publish what the video hardware is doing, for a renderer drawing from VRAM.
+ *
+ * Called from the video thread alongside the frame.
+ */
+extern void shmem_publish_video(const VidcSharedState *state, uint64_t serial);
+
+/**
+ * Reserve a block inside the section for the emulator's own use.
+ *
+ * Used to put VRAM there, so a viewer sees the guest's framebuffer as the
+ * guest writes it rather than a copy taken afterwards. Reservations are
+ * permanent and must all be made before the machine starts.
+ *
+ * @param bytes How much
+ * @param offset Receives the byte offset within the section
+ * @return A pointer into the section, or NULL if it cannot be satisfied
+ */
+extern void *shmem_reserve(uint64_t bytes, uint64_t *offset);
+
+/**
+ * Whether a pointer lies inside the section.
+ *
+ * Memory reserved here did not come from the heap, so freeing it is
+ * undefined behaviour. Anything that frees a buffer which might have been
+ * reserved has to ask first.
+ */
+extern int shmem_owns(const void *p);
+
+/** Record that a reservation holds VRAM, so clients can find it. */
+extern void shmem_set_vram(uint64_t offset, uint64_t bytes);
 
 extern ShmemHeader *shmem_header(void);
 

@@ -24,6 +24,10 @@
 #include "rpcemu.h"
 #include "vidc20.h"
 #include "mem.h"
+
+#ifdef RPCEMU_DEBUG_HOOKS
+#include "headless/shmem.h"
+#endif
 #include "iomd.h"
 #include "ide.h"
 #include "arm.h"
@@ -75,6 +79,23 @@ static int vraddrlpos, vwaddrlpos;
 void mem_init(void)
 {
 	rom  = malloc(ROMSIZE);
+
+#ifdef RPCEMU_DEBUG_HOOKS
+	/* Put VRAM inside the shared section when there is one, so a viewer
+	   draws from the guest's own framebuffer rather than from a copy taken
+	   after the fact. Falls back to a private allocation, which is what
+	   every other frontend gets. */
+	{
+		uint64_t offset = 0;
+
+		vram = shmem_reserve(8 * 1024 * 1024, &offset);
+		if (vram != NULL) {
+			memset(vram, 0, 8 * 1024 * 1024);
+			shmem_set_vram(offset, 8 * 1024 * 1024);
+		}
+	}
+	if (vram == NULL)
+#endif
 	vram = malloc(8 * 1024 * 1024); /*8 meg VRAM!*/
 	romb  = (uint8_t *) rom;
 	vramb = (uint8_t *) vram;
