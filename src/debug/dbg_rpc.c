@@ -1236,6 +1236,10 @@ handle_request(char *line)
 			    p.last_failed ? "true" : "false",
 			    (unsigned) p.last_return_code);
 		}
+		json_out_printf(&out,
+		    ",\"caller_pc\":[%u,%u,%u,%u]",
+		    (unsigned) p.caller_pc[0], (unsigned) p.caller_pc[1],
+		    (unsigned) p.caller_pc[2], (unsigned) p.caller_pc[3]);
 		if (p.command[0] != ' ') {
 			json_out_raw(&out, ",\"last_command\":");
 			json_out_string(&out, p.command);

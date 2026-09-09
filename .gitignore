@@ -62,3 +62,4 @@ __pycache__/
 .idea/
 *.user
 .DS_Store
+rpcagent.elf

@@ -368,6 +368,7 @@ typedef struct {
 	int		have_result;
 	int		last_failed;	/**< OS_CLI returned an error */
 	uint32_t	last_return_code;
+	uint32_t	caller_pc[4];	/**< Where the module called from, per reason */
 	uint32_t	last_error_number;
 	char		last_error[256];
 	uint64_t	hellos;

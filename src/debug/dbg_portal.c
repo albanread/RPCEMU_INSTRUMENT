@@ -132,6 +132,13 @@ dbg_portal_swi(void)
 {
 	const uint32_t reason = arm.reg[0];
 
+	/* Where the module called from. Modules run in place in the expansion
+	   card ROM, so this is the only way to learn where its code landed -
+	   and without that, none of the debugger can be aimed at it. */
+	if (reason <= AGENT_DONE) {
+		portal.caller_pc[reason] = PC;
+	}
+
 	switch (reason) {
 	case AGENT_HELLO:
 		portal.present = 1;
