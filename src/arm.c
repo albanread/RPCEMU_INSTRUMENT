@@ -583,6 +583,12 @@ arm_exec(void)
 		}
 		opcode = pccache2[PC >> 2];
 
+#ifdef RPCEMU_DEBUG_HOOKS
+		if (dbg_trace_gate) {
+			dbg_trace_record(PC, opcode);
+		}
+#endif
+
 		if (flaglookup[opcode >> 28][(*pcpsr) >> 28]) {
 			if (arm.arch_v4) {
 				if ((opcode & 0xe0000f0) == 0xb0) {

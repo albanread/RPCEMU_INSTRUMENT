@@ -392,6 +392,29 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"sym.load\",\"params\":{\"path\":\"ELF file\",\"bias\":\"integer\"}},"
  "{\"name\":\"sym.lookup\",\"params\":{\"name\":\"string\"}},"
  "{\"name\":\"sym.at\",\"params\":{\"addr\":\"integer\"}},"
+ "{\"name\":\"wp.set\",\"params\":{\"addr\":\"integer\",\"symbol\":\"string\","
+   "\"len\":\"bytes, default 4\",\"on\":\"r, w or rw\"},"
+   "\"summary\":\"Stop when memory is touched. For finding what corrupts a value\"},"
+ "{\"name\":\"wp.clear\",\"params\":{\"id\":\"integer, 0 for all\"}},"
+ "{\"name\":\"wp.list\"},"
+ "{\"name\":\"wp.last\",\"summary\":\"The last watchpoint hit, with the old and new value\"},"
+ "{\"name\":\"trace.start\",\"params\":{\"entries\":\"ring size\","
+   "\"from\":\"integer\",\"to\":\"integer\"},"
+   "\"summary\":\"Record executed instructions. Bound the range: unfiltered, a "
+   "million entries is a hundredth of a second\"},"
+ "{\"name\":\"trace.stop\"},"
+ "{\"name\":\"trace.read\",\"params\":{\"max\":\"entries, default 64\"},"
+   "\"summary\":\"Most recent instructions, oldest first\"},"
+ "{\"name\":\"stack.read\",\"params\":{\"sp\":\"defaults to r13\",\"words\":\"default 16\"},"
+   "\"summary\":\"After a fault pass the faulting r13 from fault.info: taking "
+   "the exception banks r13, so the live one is not the program's\"},"
+ "{\"name\":\"stack.backtrace\",\"params\":{\"sp\":\"defaults to r13\","
+   "\"depth\":\"words to scan\"},"
+   "\"summary\":\"Stack words that land inside a known symbol. A scan, not an "
+   "unwind: ARM code without a frame pointer has no chain to follow\"},"
+ "{\"name\":\"heap.stats\",\"summary\":\"OS_Heap activity, counted at the SWI\"},"
+ "{\"name\":\"heap.describe\",\"params\":{\"addr\":\"defaults to the last heap seen\"},"
+   "\"summary\":\"Read a heap descriptor header, if the magic word is there\"},"
  "{\"name\":\"quit\",\"summary\":\"Shut the emulator down\"}"
 "],\"events\":["
  "{\"name\":\"event/stopped\",\"summary\":\"The CPU stopped, with reason and PC\"},"
@@ -515,6 +538,8 @@ handle_request(char *line)
 			return;
 		}
 
+		dbg_watch_suspend();
+
 		reply_begin(id);
 		json_out_printf(&out, "{\"addr\":%u,\"len\":%lld,\"hex\":\"",
 		                (unsigned) addr, len);
@@ -527,6 +552,7 @@ handle_request(char *line)
 		/* Reading unmapped guest memory must not leave an abort
 		   pending on a machine that never asked for one. */
 		arm.event = saved_event;
+		dbg_watch_resume();
 		reply_end();
 
 	} else if (strcmp(method, "mem.write") == 0) {
@@ -554,6 +580,7 @@ handle_request(char *line)
 			written++;
 		}
 		arm.event = saved_event;
+		dbg_watch_resume();
 
 		reply_begin(id);
 		json_out_printf(&out, "{\"addr\":%u,\"written\":%u}",
@@ -817,6 +844,247 @@ handle_request(char *line)
 		reply_begin(id);
 		json_out_printf(&out, "{\"addr\":%u", (unsigned) addr);
 		write_symbol_of(addr);
+		json_out_raw(&out, "}");
+		reply_end();
+
+	} else if (strcmp(method, "wp.set") == 0) {
+		uint32_t addr;
+		const char *err = NULL;
+		const char *on = json_string(json_member(&doc, params, "on"), "w");
+		int wpid;
+
+		if (!resolve_addr(&doc, params, &addr, &err)) {
+			reply_error(id, ERR_PARAMS, err);
+			return;
+		}
+		wpid = dbg_watch_set(addr,
+		    (uint32_t) json_int(json_member(&doc, params, "len"), 4),
+		    strchr(on, 'r') != NULL, strchr(on, 'w') != NULL);
+
+		if (wpid < 0) {
+			reply_error(id, ERR_INTERNAL, "too many watchpoints");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"id\":%d,\"addr\":%u}", wpid,
+		                (unsigned) addr);
+		reply_end();
+
+	} else if (strcmp(method, "wp.clear") == 0) {
+		const int removed =
+		    dbg_watch_clear((int) json_int(json_member(&doc, params, "id"), 0));
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"removed\":%d}", removed);
+		reply_end();
+
+	} else if (strcmp(method, "wp.list") == 0) {
+		int i;
+
+		reply_begin(id);
+		json_out_raw(&out, "{\"watchpoints\":[");
+		for (i = 0; i < dbg_watch_count(); i++) {
+			DbgWatchInfo w;
+
+			if (!dbg_watch_get(i, &w)) {
+				continue;
+			}
+			json_out_printf(&out,
+			    "%s{\"id\":%d,\"addr\":%u,\"len\":%u,\"read\":%s,"
+			    "\"write\":%s,\"hits\":%u}",
+			    (i != 0) ? "," : "", w.id, (unsigned) w.addr,
+			    (unsigned) w.len, w.on_read ? "true" : "false",
+			    w.on_write ? "true" : "false", (unsigned) w.hits);
+		}
+		json_out_raw(&out, "]}");
+		reply_end();
+
+	} else if (strcmp(method, "wp.last") == 0) {
+		DbgWatchHit hit;
+
+		reply_begin(id);
+		if (!dbg_watch_last_hit(&hit)) {
+			json_out_raw(&out, "{\"hits\":0}");
+		} else {
+			json_out_printf(&out,
+			    "{\"hits\":%llu,\"id\":%d,\"addr\":%u,\"size\":%u,"
+			    "\"write\":%s,\"old\":%u,\"new\":%u,\"pc\":%u",
+			    (unsigned long long) hit.count, hit.id,
+			    (unsigned) hit.addr, (unsigned) hit.size,
+			    hit.is_write ? "true" : "false",
+			    (unsigned) hit.old_value, (unsigned) hit.new_value,
+			    (unsigned) hit.pc);
+			write_symbol_of(hit.pc);
+			json_out_raw(&out, "}");
+		}
+		reply_end();
+
+	} else if (strcmp(method, "trace.start") == 0) {
+		const uint32_t entries = (uint32_t)
+		    json_int(json_member(&doc, params, "entries"), 65536);
+		const uint32_t from = (uint32_t)
+		    json_int(json_member(&doc, params, "from"), 0);
+		const uint32_t to = (uint32_t)
+		    json_int(json_member(&doc, params, "to"), 0xffffffffu);
+
+		if (dbg_trace_start(entries, from, to) != 0) {
+			reply_error(id, ERR_INTERNAL, "could not allocate the trace ring");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_printf(&out,
+		    "{\"entries\":%u,\"from\":%u,\"to\":%u}",
+		    (unsigned) dbg_trace_capacity(), (unsigned) from, (unsigned) to);
+		reply_end();
+
+	} else if (strcmp(method, "trace.stop") == 0) {
+		dbg_trace_stop();
+		reply_begin(id);
+		json_out_printf(&out, "{\"recorded\":%llu}",
+		                (unsigned long long) dbg_trace_total());
+		reply_end();
+
+	} else if (strcmp(method, "trace.read") == 0) {
+		long long max = json_int(json_member(&doc, params, "max"), 64);
+		DbgTraceEntry *entries;
+		uint32_t count = 0;
+		uint64_t first;
+		uint32_t i;
+
+		if (max < 1 || max > 4096) {
+			max = 64;
+		}
+		entries = malloc((size_t) max * sizeof(*entries));
+		if (entries == NULL) {
+			reply_error(id, ERR_INTERNAL, "out of memory");
+			return;
+		}
+		first = dbg_trace_read(entries, (uint32_t) max, &count);
+
+		reply_begin(id);
+		json_out_printf(&out,
+		    "{\"recorded\":%llu,\"first\":%llu,\"running\":%s,\"entries\":[",
+		    (unsigned long long) dbg_trace_total(),
+		    (unsigned long long) first,
+		    dbg_trace_running() ? "true" : "false");
+		for (i = 0; i < count; i++) {
+			json_out_printf(&out,
+			    "%s{\"pc\":%u,\"opcode\":%u,\"mode\":%u,\"n\":%llu",
+			    (i != 0) ? "," : "", (unsigned) entries[i].pc,
+			    (unsigned) entries[i].opcode, (unsigned) entries[i].mode,
+			    (unsigned long long) entries[i].instruction);
+			write_symbol_of(entries[i].pc);
+			json_out_raw(&out, "}");
+		}
+		json_out_raw(&out, "]}");
+		reply_end();
+		free(entries);
+
+	} else if (strcmp(method, "stack.read") == 0) {
+		const uint32_t sp = (uint32_t)
+		    json_int(json_member(&doc, params, "sp"), (long long) arm.reg[13]);
+		long long words = json_int(json_member(&doc, params, "words"), 16);
+		DbgStackWord stack[256];
+		uint32_t got, i;
+
+		if (words < 1 || words > 256) {
+			words = 16;
+		}
+		got = dbg_stack_read(sp, stack, (uint32_t) words);
+
+		reply_begin(id);
+		json_out_printf(&out, "{\"sp\":%u,\"words\":[", (unsigned) sp);
+		for (i = 0; i < got; i++) {
+			json_out_printf(&out, "%s{\"addr\":%u,\"value\":%u",
+			    (i != 0) ? "," : "", (unsigned) stack[i].addr,
+			    (unsigned) stack[i].value);
+			if (stack[i].sym != NULL) {
+				json_out_raw(&out, ",\"sym\":");
+				json_out_string(&out, stack[i].sym);
+				json_out_printf(&out, ",\"sym_offset\":%u",
+				                (unsigned) stack[i].sym_offset);
+			}
+			json_out_raw(&out, "}");
+		}
+		json_out_raw(&out, "]}");
+		reply_end();
+
+	} else if (strcmp(method, "stack.backtrace") == 0) {
+		const uint32_t sp = (uint32_t)
+		    json_int(json_member(&doc, params, "sp"), (long long) arm.reg[13]);
+		long long depth = json_int(json_member(&doc, params, "depth"), 128);
+		DbgStackWord frames[64];
+		uint32_t got, i;
+
+		if (depth < 1 || depth > 4096) {
+			depth = 128;
+		}
+		got = dbg_stack_backtrace(sp, frames, 64, (uint32_t) depth);
+
+		reply_begin(id);
+		json_out_printf(&out,
+		    "{\"sp\":%u,\"note\":\"candidates found by scanning; ARM code "
+		    "without a frame pointer cannot be unwound exactly\",\"frames\":[",
+		    (unsigned) sp);
+		for (i = 0; i < got; i++) {
+			json_out_printf(&out,
+			    "%s{\"at\":%u,\"addr\":%u,\"sym\":",
+			    (i != 0) ? "," : "", (unsigned) frames[i].addr,
+			    (unsigned) frames[i].value);
+			json_out_string(&out, frames[i].sym);
+			json_out_printf(&out, ",\"sym_offset\":%u}",
+			                (unsigned) frames[i].sym_offset);
+		}
+		json_out_raw(&out, "]}");
+		reply_end();
+
+	} else if (strcmp(method, "heap.stats") == 0) {
+		DbgHeapStats h;
+
+		dbg_heap_get_stats(&h);
+
+		reply_begin(id);
+		json_out_printf(&out,
+		    "{\"calls\":%llu,\"initialises\":%llu,\"allocations\":%llu,"
+		    "\"frees\":%llu,\"resizes\":%llu,\"bytes_requested\":%llu,"
+		    "\"live_blocks\":%llu,\"peak_live_blocks\":%llu,\"last_heap\":%u}",
+		    (unsigned long long) h.calls,
+		    (unsigned long long) h.initialises,
+		    (unsigned long long) h.allocations,
+		    (unsigned long long) h.frees,
+		    (unsigned long long) h.resizes,
+		    (unsigned long long) h.bytes_requested,
+		    (unsigned long long) h.live_blocks,
+		    (unsigned long long) h.peak_live_blocks,
+		    (unsigned) h.last_heap);
+		reply_end();
+
+	} else if (strcmp(method, "heap.describe") == 0) {
+		DbgHeapStats h;
+		DbgHeapDescriptor d;
+		uint32_t addr;
+
+		dbg_heap_get_stats(&h);
+		addr = (uint32_t)
+		    json_int(json_member(&doc, params, "addr"), (long long) h.last_heap);
+
+		dbg_heap_describe(addr, &d);
+
+		reply_begin(id);
+		json_out_printf(&out,
+		    "{\"addr\":%u,\"valid\":%s,\"magic\":%u",
+		    (unsigned) d.addr, d.valid ? "true" : "false",
+		    (unsigned) d.magic);
+		if (d.valid) {
+			json_out_printf(&out,
+			    ",\"free_offset\":%u,\"base_offset\":%u,"
+			    "\"end_offset\":%u,\"note\":\"header words as stored; "
+			    "the block chain is not walked\"",
+			    (unsigned) d.free_offset, (unsigned) d.base_offset,
+			    (unsigned) d.end_offset);
+		}
 		json_out_raw(&out, "}");
 		reply_end();
 

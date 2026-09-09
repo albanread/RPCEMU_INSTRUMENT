@@ -60,6 +60,19 @@ extern void cacheclearpage(uint32_t a);
 extern uint32_t mem_rammask;
 extern uint32_t mem_vrammask;
 
+#ifdef RPCEMU_DEBUG_HOOKS
+/* Watchpoints. dbg_watch_gate stays zero until a watchpoint exists, so the
+   cost to every memory access is one predictable branch. Declared here
+   rather than by including dbg.h, because mem.h is included very early. */
+extern int dbg_watch_gate;
+extern void dbg_watch_check(uint32_t addr, uint32_t size, int is_write,
+                            uint32_t value);
+#define DBG_WATCH(a, sz, wr, v) \
+	do { if (dbg_watch_gate) { dbg_watch_check((a), (sz), (wr), (v)); } } while (0)
+#else
+#define DBG_WATCH(addr, size, is_write, value)	do { } while (0)
+#endif
+
 /**
  * Read a 32-bit word from a virtual address.
  *
@@ -71,6 +84,8 @@ extern uint32_t mem_vrammask;
 static inline uint32_t
 mem_read32(uint32_t addr)
 {
+	DBG_WATCH(addr, 4, 0, 0);
+
 	if (vraddrl[addr >> 12] & 1) {
 		return readmemfl(addr);
 	} else {
@@ -89,6 +104,8 @@ mem_read32(uint32_t addr)
 static inline uint32_t
 mem_read8(uint32_t addr)
 {
+	DBG_WATCH(addr, 1, 0, 0);
+
 	if (vraddrl[addr >> 12] & 1) {
 		return readmemfb(addr);
 	} else {
@@ -111,6 +128,8 @@ mem_read8(uint32_t addr)
 static inline void
 mem_write32(uint32_t addr, uint32_t val)
 {
+	DBG_WATCH(addr, 4, 1, val);
+
 	if (vwaddrl[addr >> 12] & 3) {
 		writememfl(addr, val);
 	} else {
@@ -129,6 +148,8 @@ mem_write32(uint32_t addr, uint32_t val)
 static inline void
 mem_write8(uint32_t addr, uint8_t val)
 {
+	DBG_WATCH(addr, 1, 1, val);
+
 	if (vwaddrl[addr >> 12] & 3) {
 		writememfb(addr, val);
 	} else {

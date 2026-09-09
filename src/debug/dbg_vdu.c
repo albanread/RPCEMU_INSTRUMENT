@@ -218,6 +218,10 @@ dbg_swi_hook(uint32_t swinum, uint32_t pc)
 	const uint32_t saved_event = arm.event;
 	size_t len;
 
+	/* This hook reads guest strings on every output SWI. Those are our
+	   reads, not the program's, and must not trip a watchpoint. */
+	dbg_watch_suspend();
+
 	/* OS_WriteI (SWI &100 + n) is deliberately NOT captured. The ROM
 	   implements it by executing a real OS_WriteC SWI, so capturing both
 	   duplicates every character written that way — visible as doubled
@@ -267,6 +271,12 @@ dbg_swi_hook(uint32_t swinum, uint32_t pc)
 		input_waits++;
 		break;
 
+	case SWI_OS_Heap_:
+		/* R0 reason, R1 heap descriptor, R3 size. Counting here needs
+		   no knowledge of the heap's internal layout. */
+		dbg_heap_swi(arm.reg[0], arm.reg[1], arm.reg[3]);
+		break;
+
 	case SWI_OS_CLI_:
 		guest_line(arm.reg[0], last_command, sizeof(last_command));
 		have_command = 1;
@@ -288,4 +298,5 @@ dbg_swi_hook(uint32_t swinum, uint32_t pc)
 
 	/* Undo any abort our own reads may have provoked */
 	arm.event = saved_event;
+	dbg_watch_resume();
 }

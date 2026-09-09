@@ -266,6 +266,7 @@ dbg_stop_reason_name(DbgStopReason reason)
 	case DBG_STOP_STEP:       return "step";
 	case DBG_STOP_BREAKPOINT: return "breakpoint";
 	case DBG_STOP_FAULT:      return "fault";
+	case DBG_STOP_WATCHPOINT: return "watchpoint";
 	default:                  return "none";
 	}
 }

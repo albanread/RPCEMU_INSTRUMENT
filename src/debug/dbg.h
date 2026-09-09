@@ -47,7 +47,8 @@ typedef enum {
 	DBG_STOP_REQUEST,	/**< Asked to stop */
 	DBG_STOP_STEP,		/**< Step count reached */
 	DBG_STOP_BREAKPOINT,
-	DBG_STOP_FAULT		/**< The program faulted */
+	DBG_STOP_FAULT,		/**< The program faulted */
+	DBG_STOP_WATCHPOINT	/**< Watched memory was touched */
 } DbgStopReason;
 
 /** Raised whenever the CPU must be checked before each instruction. Read
@@ -125,6 +126,117 @@ extern void dbg_fault_hook(uint32_t mmode, uint32_t address, uint32_t pc);
 extern const char *dbg_fault_kind_name(DbgFaultKind kind);
 
 /* ------------------------------------------------------------------ */
+/* Watchpoints                                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+  The check lives in the inlined memory accessors in mem.h, which are the
+  hottest code in the emulator. It is one test of a gate that stays zero
+  until a watchpoint exists.
+*/
+
+typedef struct {
+	uint32_t	addr;
+	uint32_t	len;
+	int		id;
+	int		on_read;
+	int		on_write;
+	uint32_t	hits;
+} DbgWatchInfo;
+
+typedef struct {
+	uint32_t	addr;		/**< Address touched */
+	uint32_t	size;		/**< Bytes touched */
+	int		is_write;
+	uint32_t	old_value;	/**< What was there before */
+	uint32_t	new_value;	/**< What a write put there */
+	uint32_t	pc;		/**< Instruction responsible */
+	int		id;		/**< Watchpoint that fired */
+	uint64_t	count;
+} DbgWatchHit;
+
+extern int dbg_watch_gate;
+
+extern void dbg_watch_init(void);
+extern int dbg_watch_set(uint32_t addr, uint32_t len, int on_read, int on_write);
+extern int dbg_watch_clear(int id);
+extern int dbg_watch_count(void);
+extern int dbg_watch_get(int index, DbgWatchInfo *info);
+extern int dbg_watch_last_hit(DbgWatchHit *hit);
+extern void dbg_watch_check(uint32_t addr, uint32_t size, int is_write,
+                            uint32_t value);
+
+/** Suspend the check around the debugger's own guest memory accesses, which
+    would otherwise fire read watchpoints the program never triggered. */
+extern void dbg_watch_suspend(void);
+extern void dbg_watch_resume(void);
+
+/* ------------------------------------------------------------------ */
+/* Instruction trace                                                  */
+/* ------------------------------------------------------------------ */
+
+#define DBG_TRACE_MAX_ENTRIES	(4 * 1024 * 1024)
+
+typedef struct {
+	uint32_t	pc;
+	uint32_t	opcode;
+	uint32_t	mode;
+	uint64_t	instruction;	/**< Instructions since tracing began */
+} DbgTraceEntry;
+
+extern int dbg_trace_gate;
+
+extern void dbg_trace_init(void);
+extern int dbg_trace_start(uint32_t entries, uint32_t from, uint32_t to);
+extern void dbg_trace_stop(void);
+extern int dbg_trace_running(void);
+extern uint64_t dbg_trace_total(void);
+extern uint32_t dbg_trace_capacity(void);
+extern void dbg_trace_record(uint32_t pc, uint32_t opcode);
+extern uint64_t dbg_trace_read(DbgTraceEntry *out, uint32_t max, uint32_t *count);
+
+/* ------------------------------------------------------------------ */
+/* Stack and heap                                                     */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+	uint32_t	addr;		/**< Where on the stack */
+	uint32_t	value;
+	const char	*sym;		/**< Symbol the value lands in, or NULL */
+	uint32_t	sym_offset;
+} DbgStackWord;
+
+extern uint32_t dbg_stack_read(uint32_t sp, DbgStackWord *out, uint32_t words);
+extern uint32_t dbg_stack_backtrace(uint32_t sp, DbgStackWord *out,
+                                    uint32_t max, uint32_t depth);
+
+typedef struct {
+	uint64_t	calls;
+	uint64_t	initialises;
+	uint64_t	allocations;
+	uint64_t	frees;
+	uint64_t	resizes;
+	uint64_t	bytes_requested;
+	uint64_t	live_blocks;
+	uint64_t	peak_live_blocks;
+	uint32_t	last_heap;
+} DbgHeapStats;
+
+typedef struct {
+	uint32_t	addr;
+	uint32_t	magic;
+	int		valid;
+	uint32_t	free_offset;
+	uint32_t	base_offset;
+	uint32_t	end_offset;
+} DbgHeapDescriptor;
+
+extern void dbg_heap_init(void);
+extern void dbg_heap_get_stats(DbgHeapStats *stats);
+extern void dbg_heap_swi(uint32_t reason, uint32_t heap, uint32_t size);
+extern int dbg_heap_describe(uint32_t addr, DbgHeapDescriptor *out);
+
+/* ------------------------------------------------------------------ */
 /* Symbols                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -181,6 +293,7 @@ extern int dbg_sym_get(int index, const char **name, uint32_t *addr,
 #define SWI_OS_ReadC		0x04
 #define SWI_OS_CLI_		0x05
 #define SWI_OS_Exit_		0x11
+#define SWI_OS_Heap_		0x1d
 #define SWI_OS_GenerateError_	0x2b
 #define SWI_OS_WriteN		0x46
 #define SWI_OS_WriteI		0x100	/* &100 + n writes character n */

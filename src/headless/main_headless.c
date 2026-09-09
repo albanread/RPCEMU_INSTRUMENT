@@ -205,6 +205,9 @@ main(int argc, char **argv)
 	headless_plt_init();
 	dbg_vdu_init();
 	dbg_cpu_init();
+	dbg_watch_init();
+	dbg_trace_init();
+	dbg_heap_init();
 
 	if (frame_history > 0) {
 		headless_frames_set_depth(frame_history);
