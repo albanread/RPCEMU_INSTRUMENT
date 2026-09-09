@@ -44,6 +44,7 @@
 #include "arm.h"
 #include "mem.h"
 #include "headless.h"
+#include "../headless/shmem.h"
 #include "dbg.h"
 #include "json.h"
 
@@ -381,6 +382,9 @@ static const char DESCRIBE_JSON[] =
    "still current\"},"
    "\"summary\":\"The screen as a base64 PNG, for showing it live without "
    "polling a file\"},"
+ "{\"name\":\"shmem.info\",\"summary\":\"Where the frame ring is "
+   "published in shared memory, for a viewer on this machine that wants the "
+   "pixels without the PNG, the base64 and the pipe\"},"
  "{\"name\":\"frames.list\",\"summary\":\"The held frames oldest first, each with the "
    "video mode that produced it. mode_serial only moves when the mode "
    "actually changes, so it names the frame a mode change landed on\"},"
@@ -782,6 +786,43 @@ handle_request(char *line)
 		json_out_printf(&out, "{\"held\":%d,\"serial\":%llu}",
 		                headless_frames_available(),
 		                (unsigned long long) headless_frame_serial());
+		reply_end();
+
+	} else if (strcmp(method, "shmem.info") == 0) {
+		const ShmemHeader *h = shmem_header();
+
+		reply_begin(id);
+		if (h == NULL) {
+			json_out_printf(&out,
+			    "{\"available\":false,\"reason\":\"the section "
+			    "could not be created; use frames.data\"}");
+		} else {
+			/* The names contain a backslash, so they go through
+			   the string writer rather than a %s in a format:
+			   a raw one produces JSON a strict parser rejects. */
+			json_out_printf(&out,
+			    "{\"available\":true,\"version\":%u,\"section\":",
+			    (unsigned) h->version);
+			json_out_string(&out, shmem_section_name());
+			json_out_raw(&out, ",\"event\":");
+			json_out_string(&out, shmem_event_name());
+			json_out_printf(&out,
+			    ",\"bytes\":%llu,\"header_bytes\":%u,"
+			    "\"slot_count\":%u,\"slot_bytes\":%u,"
+			    "\"slots_offset\":%llu,\"slot_struct_bytes\":%u,"
+			    "\"newest\":%llu,"
+			    "\"newest_index\":%llu,\"writes\":%llu,"
+			    "\"pixel_format\":\"xrgb8888\"}",
+			    (unsigned long long) shmem_section_bytes(),
+			    (unsigned) h->header_bytes,
+			    (unsigned) h->slot_count,
+			    (unsigned) h->slot_bytes,
+			    (unsigned long long) h->slots_offset,
+			    (unsigned) sizeof(ShmemSlot),
+			    (unsigned long long) h->newest,
+			    (unsigned long long) h->newest_index,
+			    (unsigned long long) h->writes);
+		}
 		reply_end();
 
 	} else if (strcmp(method, "bp.set") == 0) {

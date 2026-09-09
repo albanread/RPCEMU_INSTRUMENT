@@ -47,6 +47,7 @@
 #include "sound.h"
 #include "iomd.h"
 #include "headless.h"
+#include "shmem.h"
 
 /* ------------------------------------------------------------------ */
 /* Logging                                                            */
@@ -534,6 +535,33 @@ rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize,
 		ring_next = (ring_next + 1) % ring_depth;
 		if (ring_count < ring_depth) {
 			ring_count++;
+		}
+
+		/* Publish the same frame where a viewer on this machine can
+		   read it directly. One extra memcpy on the video thread buys
+		   a client the whole PNG, base64 and pipe path back. */
+		if (shmem_active()) {
+			ShmemSlot meta;
+
+			memset(&meta, 0, sizeof(meta));
+			meta.serial        = slot->frame.serial;
+			meta.when_ns       = slot->frame.when_ns;
+			meta.instructions  = slot->frame.instructions;
+			meta.mode_serial   = slot->frame.mode_serial;
+			meta.xsize         = xsize;
+			meta.ysize         = ysize;
+			meta.host_xsize    = host_xsize;
+			meta.host_ysize    = host_ysize;
+			meta.doublesize    = double_size;
+			meta.bpp           = (int32_t) slot->frame.video.bits_per_pixel;
+			meta.border        = slot->frame.video.border_colour;
+			meta.cursor_x      = slot->frame.video.cursorx;
+			meta.cursor_y      = slot->frame.video.cursory;
+			meta.cursor_height = slot->frame.video.cursorheight;
+
+			shmem_publish_frame(slot->frame.pixels,
+			                    (uint32_t) (words * sizeof(uint32_t)),
+			                    &meta);
 		}
 	}
 

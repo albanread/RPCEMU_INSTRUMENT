@@ -42,6 +42,7 @@
 #include "arm.h"
 #include "vidc20.h"
 #include "headless.h"
+#include "shmem.h"
 #include "dbg.h"
 
 /** Where human-readable messages go. Moves to stderr when the control
@@ -210,6 +211,10 @@ main(int argc, char **argv)
 	SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
 
 	headless_plt_init();
+
+	/* Best effort: a machine that cannot publish its frames still runs, and
+	   clients fall back to frames.data over the channel. */
+	shmem_init();
 	dbg_vdu_init();
 	dbg_cpu_init();
 	dbg_watch_init();
@@ -391,6 +396,7 @@ main(int argc, char **argv)
 	dbg_rpc_stop();
 	headless_window_close();
 	endrpcemu();
+	shmem_close();
 	headless_plt_close();
 
 	return 0;

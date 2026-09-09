@@ -73,6 +73,7 @@ add_executable(rpcemu-headless
 	src/headless/png_write.c
 	src/headless/keyboard_type.c
 	src/headless/window_win.c
+	src/headless/shmem.c
 
 	# Debug core
 	src/debug/dbg_vdu.c
