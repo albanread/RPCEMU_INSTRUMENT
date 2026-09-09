@@ -840,6 +840,8 @@ iomd_mouse_buttons_read(void)
 
 	int mouse_buttons = mouse_buttons_get();
 
+	mouse_probe_buttons++;
+
 	/* Left */
 	if (mouse_buttons & 1) {
 		temp |= 0x40; // bit 6

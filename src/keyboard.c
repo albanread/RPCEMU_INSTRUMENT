@@ -152,6 +152,14 @@ static struct {
  *
  * So an empty box means "no limit given" rather than "a box of no size".
  */
+/* How often the guest asks about the mouse, and by which route. RISC OS has
+   several, and which one the desktop actually uses is not something to be
+   guessed at when it can be counted. */
+unsigned mouse_probe_osmouse;
+unsigned mouse_probe_osword_21_4;
+unsigned mouse_probe_osword_21_3;
+unsigned mouse_probe_buttons;
+
 static int
 boundbox_set(void)
 {
@@ -1103,6 +1111,8 @@ mouse_get_osxy(int *x, int *y, int *osx, int *osy)
 void
 mouse_hack_osword_21_4(uint32_t a)
 {
+	mouse_probe_osword_21_4++;
+
         int x;
         int y;
         int osx;
@@ -1216,6 +1226,8 @@ mouse_hack_osbyte_106(uint32_t a)
 void
 mouse_hack_osmouse(void)
 {
+	mouse_probe_osmouse++;
+
 	int32_t temp_x;
 	int32_t temp_y;
 	uint32_t buttons = 0;
@@ -1312,6 +1324,8 @@ mouse_hack_osword_21_1(uint32_t a)
 void
 mouse_hack_osword_21_3(uint32_t a)
 {
+	mouse_probe_osword_21_3++;
+
 	int16_t osx;
 	int16_t osy;
 	int x;

@@ -46,6 +46,13 @@ extern const uint8_t *keyboard_map_key(uint32_t);
 extern int mouse_buttons_get(void);
 
 
+/* Counters, so it can be seen which route the guest uses to ask about the
+   mouse rather than assumed. */
+extern unsigned mouse_probe_osmouse;
+extern unsigned mouse_probe_osword_21_4;
+extern unsigned mouse_probe_osword_21_3;
+extern unsigned mouse_probe_buttons;
+
 extern void mouse_position_get(int *x, int *y);
 extern void mouse_mouse_move(int x, int y);
 extern void mouse_mouse_move_relative(int dx, int dy);

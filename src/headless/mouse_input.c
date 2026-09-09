@@ -110,8 +110,10 @@ host_bits(int riscos_buttons)
 void
 headless_mouse_move(int x, int y)
 {
-	const int width = vidc_get_xsize();
-	const int height = vidc_get_ysize();
+	int double_x = 0;
+	int double_y = 0;
+	int width;
+	int height;
 
 	if (!mousehack) {
 		/* Capture mode takes relative movements and there is no host
@@ -119,12 +121,26 @@ headless_mouse_move(int x, int y)
 		return;
 	}
 
+	/* The core's pointer lives in host display pixels - after doubling -
+	   while a frame is published in the guest's own. In a mode that
+	   doubles height, those differ by two, and a caller working from the
+	   picture could only ever reach the top half of the screen. Which is
+	   exactly the half the icon bar is not in. */
+	vidc_get_doublesize(&double_x, &double_y);
+
 	if (x < 0) {
 		x = 0;
 	}
 	if (y < 0) {
 		y = 0;
 	}
+
+	x <<= double_x ? 1 : 0;
+	y <<= double_y ? 1 : 0;
+
+	width = vidc_get_xsize() << (double_x ? 1 : 0);
+	height = vidc_get_ysize() << (double_y ? 1 : 0);
+
 	if (width > 0 && x >= width) {
 		x = width - 1;
 	}
@@ -215,8 +231,16 @@ headless_mouse_state(int *x, int *y, int *riscos_buttons)
 {
 	int px = 0;
 	int py = 0;
+	int double_x = 0;
+	int double_y = 0;
 
 	mouse_position_get(&px, &py);
+
+	/* Back to the pixels a frame is published in, so what comes out is in
+	   the same space as what went in. */
+	vidc_get_doublesize(&double_x, &double_y);
+	px >>= double_x ? 1 : 0;
+	py >>= double_y ? 1 : 0;
 
 	if (x != NULL) {
 		*x = px;

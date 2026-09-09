@@ -44,6 +44,7 @@
 #include "arm.h"
 #include "mem.h"
 #include "headless.h"
+#include "keyboard.h"
 #include "../headless/shmem.h"
 #include "dbg.h"
 #include "json.h"
@@ -276,13 +277,17 @@ write_mouse_state_body(void)
 
 	json_out_printf(&out,
 	    "\"x\":%d,\"y\":%d,\"select\":%s,\"menu\":%s,\"adjust\":%s,"
-	    "\"busy\":%s,\"moves\":%u,\"clicks\":%u",
+	    "\"busy\":%s,\"moves\":%u,\"clicks\":%u,"
+	    "\"asked_osmouse\":%u,\"asked_osword_21_4\":%u,"
+	    "\"asked_osword_21_3\":%u,\"asked_buttons\":%u",
 	    x, y,
 	    (buttons & MOUSE_SELECT) ? "true" : "false",
 	    (buttons & MOUSE_MENU) ? "true" : "false",
 	    (buttons & MOUSE_ADJUST) ? "true" : "false",
 	    headless_mouse_busy() ? "true" : "false",
-	    headless_mouse_moves(), headless_mouse_clicks());
+	    headless_mouse_moves(), headless_mouse_clicks(),
+	    mouse_probe_osmouse, mouse_probe_osword_21_4,
+	    mouse_probe_osword_21_3, mouse_probe_buttons);
 }
 
 static void
