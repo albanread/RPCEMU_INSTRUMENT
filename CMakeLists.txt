@@ -86,6 +86,7 @@ add_executable(rpcemu-headless
 	src/debug/dbg_portal.c
 	src/debug/dbg_rpc.c
 	src/debug/json.c
+	src/debug/base64.c
 
 	# MinGW-isms the Microsoft CRT lacks
 	src/headless/compat/dirent_win.c

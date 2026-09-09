@@ -114,6 +114,17 @@ extern int headless_screenshot(const char *path);
 extern int png_write_xrgb(const char *path, const uint32_t *pixels,
                           int width, int height, int stride_words);
 
+/**
+ * Encode a frame as PNG in memory, for handing to the control channel.
+ *
+ * A client showing the screen live should not have to poll a file the
+ * emulator just wrote.
+ *
+ * @return A malloc'd PNG the caller must free, or NULL on failure
+ */
+extern uint8_t *png_encode_xrgb(const uint32_t *pixels, int width, int height,
+                                int stride_words, size_t *out_len);
+
 /* Clocks.
 
    rpcemu_nsec_timer_ticks() is what the guest sees, and can be made a

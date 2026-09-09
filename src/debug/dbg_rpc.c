@@ -376,6 +376,11 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"frames.save\",\"params\":{\"prefix\":\"string\"},"
    "\"summary\":\"Write the whole held frame history, oldest first\"},"
  "{\"name\":\"frames.info\",\"summary\":\"How many frames are held, and the newest serial\"},"
+ "{\"name\":\"frames.data\",\"params\":{\"age\":\"0 for the newest\","
+   "\"since\":\"serial you already have; the reply says unchanged if it is "
+   "still current\"},"
+   "\"summary\":\"The screen as a base64 PNG, for showing it live without "
+   "polling a file\"},"
  "{\"name\":\"frames.list\",\"summary\":\"The held frames oldest first, each with the "
    "video mode that produced it. mode_serial only moves when the mode "
    "actually changes, so it names the frame a mode change landed on\"},"
@@ -722,6 +727,55 @@ handle_request(char *line)
 		}
 		json_out_raw(&out, "]}");
 		reply_end();
+
+	} else if (strcmp(method, "frames.data") == 0) {
+		const int age = (int) json_int(json_member(&doc, params, "age"), 0);
+		const uint64_t since = (uint64_t)
+		    json_int(json_member(&doc, params, "since"), 0);
+		HeadlessFrame f;
+
+		if (headless_frame_copy_at(age, &f) != 0) {
+			reply_error(id, ERR_INTERNAL, "no frame that far back");
+			return;
+		}
+
+		/* A client polling for a live view sends the serial it already
+		   has. A machine sitting at a prompt changes nothing, so saying
+		   "still that one" costs a few bytes instead of a megabyte. */
+		if (since != 0 && f.serial <= since) {
+			headless_frame_free(&f);
+			reply_begin(id);
+			json_out_printf(&out, "{\"serial\":%llu,\"unchanged\":true}",
+			                (unsigned long long) since);
+			reply_end();
+			return;
+		}
+
+		{
+			size_t png_len = 0;
+			uint8_t *png = png_encode_xrgb(f.pixels, f.xsize, f.ysize,
+			                               f.xsize, &png_len);
+			char *encoded = (png != NULL)
+			    ? dbg_base64_encode(png, png_len) : NULL;
+
+			free(png);
+			headless_frame_free(&f);
+
+			if (encoded == NULL) {
+				reply_error(id, ERR_INTERNAL, "could not encode the frame");
+				return;
+			}
+
+			reply_begin(id);
+			json_out_printf(&out,
+			    "{\"serial\":%llu,\"unchanged\":false,\"width\":%d,"
+			    "\"height\":%d,\"bpp\":%u,\"format\":\"png\",\"data\":\"%s\"}",
+			    (unsigned long long) f.serial, f.xsize, f.ysize,
+			    (unsigned) f.video.bits_per_pixel, encoded);
+			reply_end();
+
+			free(encoded);
+		}
 
 	} else if (strcmp(method, "frames.info") == 0) {
 		reply_begin(id);

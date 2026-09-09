@@ -399,6 +399,10 @@ extern int dbg_state_save(const char *path, uint64_t instructions,
 extern int dbg_state_load(const char *path, uint64_t *instructions,
                           const char **error);
 
+/** Encode bytes as base64, for carrying binary through the text channel.
+    Returns a malloc'd string the caller must free. */
+extern char *dbg_base64_encode(const uint8_t *data, size_t len);
+
 /* ------------------------------------------------------------------ */
 /* Control channel (JSON-RPC 2.0 over stdin/stdout)                   */
 /* ------------------------------------------------------------------ */

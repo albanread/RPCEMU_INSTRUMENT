@@ -32,6 +32,47 @@
 
 #define DEFLATE_STORED_MAX	65535
 
+/*
+  A growable byte sink. The encoder writes through this rather than to a FILE
+  so the same code produces a file on disk or a buffer for the control
+  channel: an IDE wanting to show the screen ten times a second should not
+  have to poll a file the emulator just wrote.
+*/
+typedef struct {
+	uint8_t	*data;
+	size_t	len;
+	size_t	capacity;
+	int	failed;
+} PngSink;
+
+static void
+sink_write(PngSink *sink, const void *bytes, size_t len)
+{
+	if (sink->failed) {
+		return;
+	}
+
+	if (sink->len + len > sink->capacity) {
+		size_t capacity = (sink->capacity != 0) ? sink->capacity : 65536;
+		uint8_t *grown;
+
+		while (capacity < sink->len + len) {
+			capacity *= 2;
+		}
+
+		grown = realloc(sink->data, capacity);
+		if (grown == NULL) {
+			sink->failed = 1;
+			return;
+		}
+		sink->data = grown;
+		sink->capacity = capacity;
+	}
+
+	memcpy(sink->data + sink->len, bytes, len);
+	sink->len += len;
+}
+
 static uint32_t crc_table[256];
 static int crc_table_built;
 
@@ -93,8 +134,8 @@ put_be32(uint8_t *p, uint32_t v)
 /**
  * Write one PNG chunk: length, type, data, CRC.
  */
-static int
-chunk_write(FILE *f, const char *type, const uint8_t *data, size_t len)
+static void
+chunk_write(PngSink *sink, const char *type, const uint8_t *data, size_t len)
 {
 	uint8_t hdr[8];
 	uint8_t crcbuf[4];
@@ -103,11 +144,9 @@ chunk_write(FILE *f, const char *type, const uint8_t *data, size_t len)
 	put_be32(hdr, (uint32_t) len);
 	memcpy(hdr + 4, type, 4);
 
-	if (fwrite(hdr, 1, 8, f) != 8) {
-		return 1;
-	}
-	if (len != 0 && fwrite(data, 1, len, f) != len) {
-		return 1;
+	sink_write(sink, hdr, 8);
+	if (len != 0) {
+		sink_write(sink, data, len);
 	}
 
 	crc = crc32_update(0xffffffffu, hdr + 4, 4);
@@ -117,34 +156,35 @@ chunk_write(FILE *f, const char *type, const uint8_t *data, size_t len)
 	crc ^= 0xffffffffu;
 
 	put_be32(crcbuf, crc);
-
-	return fwrite(crcbuf, 1, 4, f) != 4;
+	sink_write(sink, crcbuf, 4);
 }
 
 /**
- * Write an xRGB8888 image to a PNG file as 8-bit truecolour.
+ * Encode an xRGB8888 image as an 8-bit truecolour PNG in memory.
  *
- * @param path         Destination file
  * @param pixels       Image data, 0x00RRGGBB or 0xFFRRGGBB per pixel
  * @param width        Image width in pixels
  * @param height       Image height in pixels
  * @param stride_words Words per row in pixels[] (usually equal to width)
- * @return 0 on success, non-zero on failure
+ * @param out_len      Receives the encoded length
+ * @return A malloc'd PNG the caller must free, or NULL on failure
  */
-int
-png_write_xrgb(const char *path, const uint32_t *pixels,
-               int width, int height, int stride_words)
+uint8_t *
+png_encode_xrgb(const uint32_t *pixels, int width, int height,
+                int stride_words, size_t *out_len)
 {
-	FILE *f;
+	PngSink sink = { NULL, 0, 0, 0 };
 	uint8_t ihdr[13];
 	uint8_t *raw = NULL;
 	uint8_t *zdata = NULL;
 	size_t rowbytes, rawlen, zlen, pos, done;
 	uint32_t adler = 1;
-	int y, x, ret = 1;
+	int y, x;
+
+	*out_len = 0;
 
 	if (pixels == NULL || width <= 0 || height <= 0) {
-		return 1;
+		return NULL;
 	}
 
 	rowbytes = (size_t) width * 3 + 1;	/* filter byte per row */
@@ -152,7 +192,7 @@ png_write_xrgb(const char *path, const uint32_t *pixels,
 
 	raw = malloc(rawlen);
 	if (raw == NULL) {
-		return 1;
+		return NULL;
 	}
 
 	/* Filter type 0 (None) on every row: the point here is a faithful
@@ -207,15 +247,7 @@ png_write_xrgb(const char *path, const uint32_t *pixels,
 	put_be32(zdata + pos, adler);
 	pos += 4;
 
-	f = fopen(path, "wb");
-	if (f == NULL) {
-		goto out;
-	}
-
-	if (fwrite("\x89PNG\r\n\x1a\n", 1, 8, f) != 8) {
-		fclose(f);
-		goto out;
-	}
+	sink_write(&sink, "\x89PNG\r\n\x1a\n", 8);
 
 	put_be32(ihdr, (uint32_t) width);
 	put_be32(ihdr + 4, (uint32_t) height);
@@ -225,19 +257,51 @@ png_write_xrgb(const char *path, const uint32_t *pixels,
 	ihdr[11] = 0;	/* filter method: adaptive */
 	ihdr[12] = 0;	/* interlace: none */
 
-	if (chunk_write(f, "IHDR", ihdr, sizeof(ihdr)) != 0 ||
-	    chunk_write(f, "IDAT", zdata, pos) != 0 ||
-	    chunk_write(f, "IEND", NULL, 0) != 0)
-	{
-		fclose(f);
-		goto out;
-	}
-
-	ret = (fclose(f) != 0);
+	chunk_write(&sink, "IHDR", ihdr, sizeof(ihdr));
+	chunk_write(&sink, "IDAT", zdata, pos);
+	chunk_write(&sink, "IEND", NULL, 0);
 
 out:
 	free(raw);
 	free(zdata);
+
+	if (sink.failed) {
+		free(sink.data);
+		return NULL;
+	}
+
+	*out_len = sink.len;
+
+	return sink.data;
+}
+
+/**
+ * Write an xRGB8888 image to a PNG file.
+ *
+ * @return 0 on success, non-zero on failure
+ */
+int
+png_write_xrgb(const char *path, const uint32_t *pixels,
+               int width, int height, int stride_words)
+{
+	size_t len = 0;
+	uint8_t *png = png_encode_xrgb(pixels, width, height, stride_words, &len);
+	FILE *f;
+	int ret;
+
+	if (png == NULL) {
+		return 1;
+	}
+
+	f = fopen(path, "wb");
+	if (f == NULL) {
+		free(png);
+		return 1;
+	}
+
+	ret = (fwrite(png, 1, len, f) != len);
+	ret |= (fclose(f) != 0);
+	free(png);
 
 	return ret;
 }
