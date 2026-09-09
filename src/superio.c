@@ -37,6 +37,7 @@
 #include "iomd.h"
 #include "ide.h"
 #include "arm.h"
+#include "snapshot.h"
 #include "i8042.h"
 
 /* The chips support entering a 'configuration' mode,
@@ -442,4 +443,38 @@ superio_read(uint32_t addr)
 	}
 
 	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+superio_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, &super_type, sizeof(super_type));
+	w(ctx, &configmode, sizeof(configmode));
+	w(ctx, configregs665, sizeof(configregs665));
+	w(ctx, configregs672, sizeof(configregs672));
+	w(ctx, &configreg, sizeof(configreg));
+	w(ctx, &scratch, sizeof(scratch));
+	w(ctx, &linectrl, sizeof(linectrl));
+	w(ctx, &gp_index, sizeof(gp_index));
+	w(ctx, gp_regs, sizeof(gp_regs));
+	w(ctx, &printstat, sizeof(printstat));
+}
+
+void
+superio_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, &super_type, sizeof(super_type));
+	r(ctx, &configmode, sizeof(configmode));
+	r(ctx, configregs665, sizeof(configregs665));
+	r(ctx, configregs672, sizeof(configregs672));
+	r(ctx, &configreg, sizeof(configreg));
+	r(ctx, &scratch, sizeof(scratch));
+	r(ctx, &linectrl, sizeof(linectrl));
+	r(ctx, &gp_index, sizeof(gp_index));
+	r(ctx, gp_regs, sizeof(gp_regs));
+	r(ctx, &printstat, sizeof(printstat));
 }

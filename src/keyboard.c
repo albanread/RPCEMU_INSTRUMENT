@@ -43,6 +43,7 @@
 #include "iomd.h"
 #include "arm.h"
 #include "i8042.h"
+#include "snapshot.h"
 
 /* Keyboard Commands */
 #define KBD_CMD_ENABLE		0xf4
@@ -1277,4 +1278,48 @@ mouse_hack_osword_21_3(uint32_t a)
 	mouse_osunits_to_host(osx, osy, &x, &y);
 
 	rpcemu_move_host_mouse(x, y);
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+keyboard_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, &kbd, sizeof(kbd));
+	w(ctx, &mouse, sizeof(mouse));
+	w(ctx, &mouse_hack, sizeof(mouse_hack));
+	w(ctx, &msqueue, sizeof(msqueue));
+	w(ctx, &msenable, sizeof(msenable));
+	w(ctx, &msreset, sizeof(msreset));
+	w(ctx, &msstat, sizeof(msstat));
+	w(ctx, &msdata, sizeof(msdata));
+	w(ctx, &mousepoll, sizeof(mousepoll));
+	w(ctx, &msincommand, sizeof(msincommand));
+	w(ctx, &justsent, sizeof(justsent));
+	w(ctx, &mouse_type, sizeof(mouse_type));
+	w(ctx, &mouse_detect_state, sizeof(mouse_detect_state));
+	w(ctx, &kcallback, sizeof(kcallback));
+	w(ctx, &mcallback, sizeof(mcallback));
+}
+
+void
+keyboard_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, &kbd, sizeof(kbd));
+	r(ctx, &mouse, sizeof(mouse));
+	r(ctx, &mouse_hack, sizeof(mouse_hack));
+	r(ctx, &msqueue, sizeof(msqueue));
+	r(ctx, &msenable, sizeof(msenable));
+	r(ctx, &msreset, sizeof(msreset));
+	r(ctx, &msstat, sizeof(msstat));
+	r(ctx, &msdata, sizeof(msdata));
+	r(ctx, &mousepoll, sizeof(mousepoll));
+	r(ctx, &msincommand, sizeof(msincommand));
+	r(ctx, &justsent, sizeof(justsent));
+	r(ctx, &mouse_type, sizeof(mouse_type));
+	r(ctx, &mouse_detect_state, sizeof(mouse_detect_state));
+	r(ctx, &kcallback, sizeof(kcallback));
+	r(ctx, &mcallback, sizeof(mcallback));
 }

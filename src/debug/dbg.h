@@ -344,6 +344,23 @@ extern const char *dbg_vdu_last_command(void);
 extern void dbg_swi_hook(uint32_t swinum, uint32_t pc);
 
 /* ------------------------------------------------------------------ */
+/* Snapshots                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Save or restore the whole machine.
+ *
+ * Restoring a booted machine takes milliseconds where booting takes nine
+ * seconds, which is what makes a tight edit-run-inspect loop affordable.
+ *
+ * @return 0 on success; on failure *error says why
+ */
+extern int dbg_state_save(const char *path, uint64_t instructions,
+                          const char **error);
+extern int dbg_state_load(const char *path, uint64_t *instructions,
+                          const char **error);
+
+/* ------------------------------------------------------------------ */
 /* Control channel (JSON-RPC 2.0 over stdin/stdout)                   */
 /* ------------------------------------------------------------------ */
 

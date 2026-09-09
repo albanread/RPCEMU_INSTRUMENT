@@ -33,6 +33,7 @@
 
 #include "rpcemu.h"
 #include "cmos.h"
+#include "snapshot.h"
 
 #if 0
 #define dbgprintf(x...) { fprintf(stderr, x); }
@@ -792,5 +793,34 @@ reseti2c(uint32_t chosen_i2c_devices)
 	spd->reg_address = 0;
 
 	/* Initialise the I2C state machine */
+	reset_serdes(serdes);
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+cmos_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, cmosram, sizeof(cmosram));
+	w(ctx, &i2c_devices, sizeof(i2c_devices));
+	w(ctx, &pcf_s.reg_address, sizeof(pcf_s.reg_address));
+	w(ctx, &pcf_s.state, sizeof(pcf_s.state));
+}
+
+void
+cmos_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, cmosram, sizeof(cmosram));
+	r(ctx, &i2c_devices, sizeof(i2c_devices));
+	r(ctx, &pcf_s.reg_address, sizeof(pcf_s.reg_address));
+	r(ctx, &pcf_s.state, sizeof(pcf_s.state));
+
+	/* The I2C state machine and the slave handles are full of pointers to
+	   these statics, which say nothing useful in another process. Rather
+	   than fixing each one up, the bus is reset: a transfer caught in
+	   flight at snapshot time is transient state the OS will retry, and
+	   resetting cannot be subtly wrong the way a fixup can. */
 	reset_serdes(serdes);
 }

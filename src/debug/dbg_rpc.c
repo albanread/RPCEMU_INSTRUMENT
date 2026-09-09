@@ -415,6 +415,11 @@ static const char DESCRIBE_JSON[] =
  "{\"name\":\"heap.stats\",\"summary\":\"OS_Heap activity, counted at the SWI\"},"
  "{\"name\":\"heap.describe\",\"params\":{\"addr\":\"defaults to the last heap seen\"},"
    "\"summary\":\"Read a heap descriptor header, if the magic word is there\"},"
+ "{\"name\":\"snapshot.save\",\"params\":{\"path\":\"string\"},"
+   "\"summary\":\"Save the whole machine\"},"
+ "{\"name\":\"snapshot.load\",\"params\":{\"path\":\"string\"},"
+   "\"summary\":\"Restore it. Booting takes nine seconds; this takes "
+   "milliseconds\"},"
  "{\"name\":\"quit\",\"summary\":\"Shut the emulator down\"}"
 "],\"events\":["
  "{\"name\":\"event/stopped\",\"summary\":\"The CPU stopped, with reason and PC\"},"
@@ -1085,6 +1090,59 @@ handle_request(char *line)
 			    (unsigned) d.free_offset, (unsigned) d.base_offset,
 			    (unsigned) d.end_offset);
 		}
+		json_out_raw(&out, "}");
+		reply_end();
+
+	} else if (strcmp(method, "snapshot.save") == 0) {
+		const char *path =
+		    json_string(json_member(&doc, params, "path"), NULL);
+		const char *err = NULL;
+
+		if (path == NULL) {
+			reply_error(id, ERR_PARAMS, "path is required");
+			return;
+		}
+		if (dbg_state_save(path, headless_instructions(), &err) != 0) {
+			reply_error(id, ERR_INTERNAL, (err != NULL) ? err : "save failed");
+			return;
+		}
+
+		reply_begin(id);
+		json_out_raw(&out, "{\"path\":");
+		json_out_string(&out, path);
+		json_out_printf(&out, ",\"instructions\":%llu}",
+		                (unsigned long long) headless_instructions());
+		reply_end();
+
+	} else if (strcmp(method, "snapshot.load") == 0) {
+		const char *path =
+		    json_string(json_member(&doc, params, "path"), NULL);
+		const char *err = NULL;
+		uint64_t instructions = 0;
+
+		if (path == NULL) {
+			reply_error(id, ERR_PARAMS, "path is required");
+			return;
+		}
+		if (dbg_state_load(path, &instructions, &err) != 0) {
+			reply_error(id, ERR_INTERNAL, (err != NULL) ? err : "load failed");
+			return;
+		}
+
+		/* Put the instruction count back too: it is part of what the
+		   machine looked like, and a run from a restored snapshot should
+		   be comparable with the run that produced it. */
+		headless_instruction_total = instructions;
+		inscount = 0;
+
+		/* The guest must not see the pause as elapsed time. */
+		headless_timers_reset();
+
+		reply_begin(id);
+		json_out_raw(&out, "{\"path\":");
+		json_out_string(&out, path);
+		json_out_raw(&out, ",\"status\":");
+		write_status();
 		json_out_raw(&out, "}");
 		reply_end();
 

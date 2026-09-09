@@ -28,6 +28,7 @@
 #include "arm.h"
 #include "cp15.h"
 #include "mem.h"
+#include "snapshot.h"
 
 int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
 
@@ -176,6 +177,48 @@ cp15_init(void)
 static uint32_t *tlbram;
 static uint32_t tlbrammask;
 
+/**
+ * Point tlbram at the RAM bank holding the translation table.
+ *
+ * Derived from the translation table base register, so it can be recomputed
+ * at any time rather than saved: a pointer means nothing in another process.
+ */
+static void
+cp15_update_tlbram(void)
+{
+	switch (cp15.translation_table & 0x1f000000) {
+	case 0x02000000: /* VRAM */
+		tlbram = vram;
+		tlbrammask = mem_vrammask >> 2;
+		break;
+	case 0x10000000: /* SIMM 0 bank 0 */
+	case 0x11000000:
+	case 0x12000000:
+	case 0x13000000:
+		tlbram = ram00;
+		tlbrammask = mem_rammask >> 2;
+		break;
+	case 0x14000000: /* SIMM 0 bank 1 */
+	case 0x15000000:
+	case 0x16000000:
+	case 0x17000000:
+		tlbram = ram01;
+		tlbrammask = mem_rammask >> 2;
+		break;
+	case 0x18000000: /* SIMM 1 bank 0 */
+	case 0x19000000:
+	case 0x1a000000:
+	case 0x1b000000:
+	case 0x1c000000: /* SIMM 1 bank 1 */
+	case 0x1d000000:
+	case 0x1e000000:
+	case 0x1f000000:
+		tlbram = ram1;
+		tlbrammask = 0x7ffffff >> 2;
+		break;
+	}
+}
+
 static void
 cp15_tlb_flush_all(void)
 {
@@ -235,40 +278,11 @@ cp15_write(uint32_t opcode, uint32_t val)
 
 	case 2: /* Translation Table Base */
 		cp15.translation_table = val & ~0x3fffu;
-		switch (cp15.translation_table & 0x1f000000) {
-		case 0x02000000: /* VRAM */
-			tlbram = vram;
-			tlbrammask = mem_vrammask >> 2;
-			break;
-		case 0x10000000: /* SIMM 0 bank 0 */
-		case 0x11000000:
-		case 0x12000000:
-		case 0x13000000:
-			tlbram = ram00;
-			tlbrammask = mem_rammask >> 2;
-			break;
-		case 0x14000000: /* SIMM 0 bank 1 */
-		case 0x15000000:
-		case 0x16000000:
-		case 0x17000000:
-			tlbram = ram01;
-			tlbrammask = mem_rammask >> 2;
-			break;
-		case 0x18000000: /* SIMM 1 bank 0 */
-		case 0x19000000:
-		case 0x1a000000:
-		case 0x1b000000:
-		case 0x1c000000: /* SIMM 1 bank 1 */
-		case 0x1d000000:
-		case 0x1e000000:
-		case 0x1f000000:
-			tlbram = ram1;
-			tlbrammask = 0x7ffffff >> 2;
-			break;
-		}
+		cp15_update_tlbram();
 		cp15_tlb_flush_all();
 		resetcodeblocks();
 		return;
+
 
 	case 3: /* Domain Access Control */
 		if (val != cp15.domain_access_control) {
@@ -602,4 +616,30 @@ getpccache(uint32_t addr)
 		}
 	}
 	fatal("Bad PC %08x %08x\n", addr, phys_addr);
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+cp15_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, &cp15, sizeof(cp15));
+	w(ctx, &dcache, sizeof(dcache));
+	w(ctx, &icache, sizeof(icache));
+}
+
+void
+cp15_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, &cp15, sizeof(cp15));
+	r(ctx, &dcache, sizeof(dcache));
+	r(ctx, &icache, sizeof(icache));
+
+	/* tlbram points into one of the RAM banks. Saving the pointer would
+	   mean nothing in another process, so it is recomputed from the
+	   translation table base, which is the value it was derived from. */
+	cp15_update_tlbram();
+	cp15_tlb_flush_all();
 }

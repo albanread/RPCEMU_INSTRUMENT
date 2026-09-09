@@ -39,6 +39,7 @@
 #include "keyboard.h"
 #include "sound.h"
 #include "mem.h"
+#include "snapshot.h"
 #include "iomd.h"
 
 static int current_sizex = -1; /**< Width of the video mode, -1 on invalid */
@@ -1037,4 +1038,28 @@ void
 resetbuffer(void)
 {
 	memset(dirtybuffer, 0xff, 512 * 4);
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+vidc_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, &vidc, sizeof(vidc));
+}
+
+void
+vidc_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, &vidc, sizeof(vidc));
+
+	/* thr is the video thread's cached copy, refreshed from vidc and from
+	   IOMD on the next pass, and it holds pointers that mean nothing in
+	   another process. Marking every line dirty forces a full redraw so
+	   nothing of the previous image survives. */
+	memset(dirtybuffer1, 0xff, sizeof(dirtybuffer1));
+	memset(dirtybuffer2, 0xff, sizeof(dirtybuffer2));
+	vidc.palchange = 1;
 }

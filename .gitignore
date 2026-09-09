@@ -18,3 +18,6 @@ cmos.ram.bak
 *.hdf
 vdu.txt
 *.png
+booted.state
+testprog.elf
+testprog.o

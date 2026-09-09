@@ -82,6 +82,7 @@ add_executable(rpcemu-headless
 	src/debug/dbg_watch.c
 	src/debug/dbg_trace.c
 	src/debug/dbg_analyse.c
+	src/debug/dbg_state.c
 	src/debug/dbg_rpc.c
 	src/debug/json.c
 

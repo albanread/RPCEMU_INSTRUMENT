@@ -32,6 +32,7 @@
 #include "arm.h"
 #include "cp15.h"
 #include "mem.h"
+#include "snapshot.h"
 
 ARMState arm;
 
@@ -1915,4 +1916,34 @@ skip:
 	inscount += (uint32_t) linecyc;
 
 	return linecyc;
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+arm_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, &arm, sizeof(arm));
+	w(ctx, &prog32, sizeof(prog32));
+	w(ctx, &inscount, sizeof(inscount));
+}
+
+void
+arm_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, &arm, sizeof(arm));
+	r(ctx, &prog32, sizeof(prog32));
+	r(ctx, &inscount, sizeof(inscount));
+
+	/* Rebuild what the mode implies: the banked register pointers, which
+	   register holds the CPSR, the PC mask and the memory access mode.
+	   Passing the mode it already has makes this a rebuild rather than a
+	   mode change, so no register values move. */
+	updatemode(arm.mode);
+
+	/* The instruction fetch cache points at whichever page was current
+	   before; no address can match this, so the next fetch reloads it. */
+	pccache = 0xffffffff;
 }

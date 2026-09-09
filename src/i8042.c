@@ -38,6 +38,7 @@
 
 #include "keyboard.h"
 #include "i8042.h"
+#include "snapshot.h"
 
 /* Commands */
 #define KBD_CCMD_READ_MODE	0x20	/* Read mode bits */
@@ -231,4 +232,20 @@ i8042_reset(void)
 	i8042.out = 0;
 	i8042.irq_kbd = 0;
 	i8042.irq_mouse = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+i8042_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, &i8042, sizeof(i8042));
+}
+
+void
+i8042_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, &i8042, sizeof(i8042));
 }

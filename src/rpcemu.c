@@ -34,6 +34,7 @@
 
 
 #include "rpcemu.h"
+#include "snapshot.h"
 #include "mem.h"
 #include "vidc20.h"
 #include "keyboard.h"
@@ -742,4 +743,28 @@ rpcemu_nat_forward_remove(PortForwardRule rule)
 
 	// rule not found, should be impossible
 	assert(0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot                                                           */
+/* ------------------------------------------------------------------ */
+
+void
+rpcemu_state_save(SnapshotWrite w, void *ctx)
+{
+	w(ctx, &cycles, sizeof(cycles));
+	w(ctx, &drawscre, sizeof(drawscre));
+	w(ctx, &fdccallback, sizeof(fdccallback));
+	w(ctx, &idecallback, sizeof(idecallback));
+	w(ctx, &motoron, sizeof(motoron));
+}
+
+void
+rpcemu_state_load(SnapshotRead r, void *ctx)
+{
+	r(ctx, &cycles, sizeof(cycles));
+	r(ctx, &drawscre, sizeof(drawscre));
+	r(ctx, &fdccallback, sizeof(fdccallback));
+	r(ctx, &idecallback, sizeof(idecallback));
+	r(ctx, &motoron, sizeof(motoron));
 }
